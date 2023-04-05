@@ -14,7 +14,7 @@ rm(list = ls())
 knitr::opts_knit$set(options(scipen=999))
 
 # Install and load all the packages that will be used for analysis
-pkgs <- c("tidyverse", "lubridate", "openxlsx", "academictwitteR", "wordcloud")
+pkgs <- c("tidyverse", "lubridate", "openxlsx", "academictwitteR", "wordcloud", "googlesheets4")
 
 miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
 if(length(miss_pkgs)>0){
@@ -85,11 +85,12 @@ query_test <- build_query(query = keywords, is_retweet = F, country = "KE", lang
 tweets_temp <- get_all_tweets(
   query = query_test,
   bearer_token = get_bearer(),
-  start_tweets = "2021-01-01T00:00:00Z",
+  start_tweets = "2019-01-01T00:00:00Z",
   end_tweets = "2023-04-03T11:59:00Z",
-  n = 10000)
+  n = 1000)
 
-#tweets_temp$text
+# Export Tweets raw into Googlesheet.
+write_sheet(data = tweets_temp[,c("lang", "text", "possibly_sensitive", "id", "created_at")], ss = "https://docs.google.com/spreadsheets/d/1ukBiU_pE0GJlo0nUeXvfBUVU-yh-jweOITqmkpEq6cA/edit#gid=0", sheet = "Sheet1")
 
 ```
 
