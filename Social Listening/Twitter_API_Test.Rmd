@@ -1,0 +1,57 @@
+---
+title: "Twitter_API_Test"
+author: "Jonathan Karl"
+date: '2023-03-27'
+output: html_document
+---
+
+# Set up libraries
+
+```{r, message = F}
+
+# Prevent scientific notation
+rm(list = ls())
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "lubridate", "openxlsx", "academictwitteR")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+# Prep Twitter Scraper
+
+```{r}
+########## Academic Twitter Scraping
+set_bearer()
+get_bearer()
+```
+
+
+```{r}
+
+# Set up keywords to scrape
+keywords <- c("HPV", "HPV vaccine")
+
+# Build test Query
+query_test <- build_query(query = keywords, is_retweet = F, country = "KE", lang = "en")
+
+# Scrapping twitter using query and given time frame
+tweets_temp <- get_all_tweets(
+  query = query_test,
+  bearer_token = get_bearer(),
+  start_tweets = "2021-01-01T00:00:00Z",
+  end_tweets = "2023-03-26T11:59:00Z",
+  n = 100)
+
+tweets_temp$text
+
+```
+
