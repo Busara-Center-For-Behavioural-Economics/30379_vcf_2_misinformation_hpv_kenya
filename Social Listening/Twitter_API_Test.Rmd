@@ -41,17 +41,17 @@ get_bearer()
 keywords <- c("HPV", "HPV vaccine")
 
 # Build test Query
-query_test <- build_query(query = keywords, is_retweet = F, country = "KE", lang = "en")
+query_test <- build_query(users = "GRAUganda", query = "")
 
 # Scrapping twitter using query and given time frame
 tweets_temp <- get_all_tweets(
   query = query_test,
   bearer_token = get_bearer(),
-  start_tweets = "2021-01-01T00:00:00Z",
+  start_tweets = "2010-01-01T00:00:00Z",
   end_tweets = "2023-03-26T11:59:00Z",
-  n = 100)
+  n = Inf)
 
-tweets_temp$text
+save(tweets_temp, file = "/Users/jonathan/Downloads/tweets_GRAUganda.RData")
 
 ```
 
