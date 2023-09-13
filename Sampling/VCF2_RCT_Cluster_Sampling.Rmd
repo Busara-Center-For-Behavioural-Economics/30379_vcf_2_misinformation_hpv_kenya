@@ -1,0 +1,308 @@
+---
+title: "VCF2 - Sampling"
+author: "Jonathan Karl"
+date: '2023-04-19'
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "sp", "googlesheets4","rgdal", "rgeos", "raster", "sf")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+```{r}
+nairobi <- 4397073
+kajiado <- 1117840
+kiambu <- 2454504
+machakos <- 1421932
+
+total_study_area_pop <- nairobi + kajiado + kiambu + machakos
+
+# The real stuff
+recruitment <- 16538
+baseline <- 12250
+endline <- 8500
+
+
+# For IRB
+recruitment <- 19250
+baseline <- 14000
+endline <- 10000
+
+
+
+# Nairobi
+round((nairobi/total_study_area_pop)*recruitment/4) # Recruitment
+round((nairobi/total_study_area_pop)*baseline/4) # Baseline
+round((nairobi/total_study_area_pop)*endline/4)# Endline
+
+# Kajiado
+round((kajiado/total_study_area_pop)*recruitment/4) # Recruitment
+round((kajiado/total_study_area_pop)*baseline/4) # Baseline
+round((kajiado/total_study_area_pop)*endline/4) # Endline
+
+# Kiambu
+round((kiambu/total_study_area_pop)*recruitment/4) # Recruitment
+round((kiambu/total_study_area_pop)*baseline/4) # Baseline
+round((kiambu/total_study_area_pop)*endline/4) # Endline
+
+# Machakos
+round((machakos/total_study_area_pop)*recruitment/4) # Recruitment
+round((machakos/total_study_area_pop)*baseline/4) # Baseline
+round((machakos/total_study_area_pop)*endline/4) # Endline
+
+
+
+# Final sample into clusters - How many clusters per place?
+as.matrix(c(nairobi = round((nairobi/total_study_area_pop)*endline)/85,
+kajiado = round((kajiado/total_study_area_pop)*endline)/85,
+kiambu = round((kiambu/total_study_area_pop)*endline)/85,
+machakos = round((machakos/total_study_area_pop)*endline)/85))
+
+```
+
+*From the Paper No margin, no mission? A field experiment on incentives for public service delivery:* To implement the design, we first conducted a census of all hair salons in Lusaka, collecting GPS coordinates and numerous salon and stylist characteristics. We then imposed a grid on the GPS-mapped locations of the salons, to divide the city into equal geographical areas of 650 by 650 m each. We excluded a buffer of 75 m on all sides of the grid cell, resulting in at least 150 m between salons in adjacent areas. The resulting areas, each measuring 250,000 m2, served as the unit of randomization. Salons located in buffer areas were not invited to join the program. The final sample for randomization consists of 205 distinct neighbourhoods, containing 1222 hair salons.
+
+*Jonathan's Approach:* This study is design for urban and peri-urban areas in and around Nairobi. Accordingly, we labelled all wards in Nairobi and surrounding counties (Kiambu, Machakos, Kajiado) with the help of Field Officers as rural, peri-urban and urban. Within the wards labelled as peri-urban and urban, we randomly allocated circular clusters with a 1-mile radius (the minimum geographical targeting area Facebook's advertising ecosystem allows). 
+
+
+## Read in geo-data and geo-entity labels
+
+```{r}
+
+# Read in Shapefile
+shp_kenya_adm3 <- readOGR(dsn = "gadm41_KEN_shp/gadm41_KEN_3.shp")
+
+# Select relevant counties
+shp_kenya_adm3 <- shp_kenya_adm3[shp_kenya_adm3$NAME_1 %in% c("Nairobi", "Machakos", "Kajiado", "Kiambu"),]
+
+# Select relevant Wards
+labelled_wards <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1NLDeLVP5OXw91kX41BCtgZmZnjIsSZfTBjmXBsSnqFs/edit#gid=1092120316")
+
+# Create final label for wards without disagreement
+idx_no_disagreement <- apply(labelled_wards[,4:7], FUN = function(x) length(unique(na.omit(x))) < 2, MARGIN = 1)
+labelled_wards$final_label[idx_no_disagreement] <- apply(labelled_wards[idx_no_disagreement,4:7], FUN = function(x) unique(na.omit(x)), MARGIN = 1)
+
+# For those with disagreement, adopt the field verification column
+labelled_wards$final_label[!idx_no_disagreement] <- labelled_wards$`Not-rural? (i.e. urban / peri-urban) - Field verification`[!idx_no_disagreement]
+
+# Add the last few in Kiambu
+labelled_wards$final_label[!is.na(labelled_wards$`Not-rural? (i.e. urban / peri-urban) - Busara colleagues`)] <- labelled_wards$`Not-rural? (i.e. urban / peri-urban) - Busara colleagues`[!is.na(labelled_wards$`Not-rural? (i.e. urban / peri-urban) - Busara colleagues`)]
+
+# Export Shapefile to view in QGIS for sensechecking output visually
+shp_kenya_adm3$geo_entity <- labelled_wards$final_label
+writeOGR(shp_kenya_adm3, dsn = 'gadm41_KEN_shp', layer = 'gadm41_KEN_3_urban_rural_classified', driver = "ESRI Shapefile", overwrite_layer = TRUE)
+
+```
+
+## Distribute points
+
+```{r}
+
+# Select only polygons that are urban or peri-urban
+shp_kenya_adm3 <- shp_kenya_adm3[shp_kenya_adm3$geo_entity %in% c("urban", "peri-urban"),]
+
+# Define the bounds of the polygon underlying the geospatial object
+bounds <- shp_kenya_adm3@polygons[[1]]@Polygons[[1]]@coords
+
+# Define the distance threshold (2 miles in this case)
+distance_threshold <- 2 * 1609.34 + 200  # 1 mile = 1609.34 meters + Buffer between Clusters
+
+# Create an empty spatial points object
+points <- SpatialPoints(data.frame(x = 0, y = 0), proj4string = CRS(proj4string(shp_kenya_adm3)))[-1,]
+
+# Set a seed
+set.seed(92)
+
+# Generate random points until reaching the desired number (100 in this case)
+count_points <- 1
+count_tries <- 1
+while(length(points) < 1000) {
+  # Generate a random point within the bounds of the polygon
+  random_point <- spsample(shp_kenya_adm3, 1, type = "random", iter=20)
+  #print(random_point)
+  print(count_tries)
+  
+  # Check if the new point is at least 2 miles away from existing points
+  if(length(points) > 0) {
+    distances <- raster::pointDistance(points, random_point, lonlat = T)
+    count_tries <- count_tries + 1
+
+    if(min(distances) < distance_threshold) {
+      next  # Skip to the next iteration if the minimum distance is less than the threshold
+    }
+  }
+  
+  # Add the new point to the points object
+  points <- rbind(points, random_point)
+  print(paste("New Point:", count_points))
+  count_points <- count_points + 1
+}
+
+# Plot the points within the polygon
+plot(shp_kenya_adm3)
+points(points, col = "red", pch = 1)
+
+
+points_df <- SpatialPointsDataFrame(coords = data.frame(points), data = data.frame(cluster_id = 1:length(points)))
+temp <- as(points,"SpatialPointsDataFrame")
+writeOGR(obj=points_df, dsn="clusters", layer="points", driver="ESRI Shapefile", overwrite_layer = TRUE) # this is in equal area projection
+
+```
+
+## Select clusters with a population probability weight
+
+```{r}
+
+# How many clusters? (100 necessary for power calculation --> but we will oversample by 16%)
+number_clusters <- 116
+
+# Read in Population File (Takes some time...the commented out code crops the file to the study areas and cuts out the rest of Kenya)
+#ken_general_2020 <- read.csv("population_density_data/ken_general_2020.csv")
+#head(ken_general_2020)
+#
+## Filter df for the rows within the box of the 4 target counties
+#ken_general_2020_cropped <- ken_general_2020 %>% 
+#  filter(longitude >= 35.9962005610001370 & longitude <= 37.9374580390000347 & latitude >= -3.1870117179998942 & latitude <= -0.7526243919999729)
+#write.csv(ken_general_2020_cropped, "population_density_data/ken_general_2020_cropped.csv")
+
+# Read in the filtered data
+ken_general_2020_cropped <- read.csv("population_density_data/ken_general_2020_cropped.csv")
+
+# Convert to sf object
+ken_general_2020_cropped_sf <- st_as_sf(ken_general_2020_cropped, coords = c("longitude", "latitude"), crs = 4326)
+
+# Read in cluster points
+cluster_choiceset <- readOGR("clusters/points.shp")
+crs(cluster_choiceset) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Convert to sf data frame
+clusters_sf <- st_as_sf(cluster_choiceset)
+
+# Set the radius in meters (1 mile = 1609.34 meters)
+radius_meters <- 1609.34
+
+# Create circular polygons with a radius of 1 mile
+clusters_circles_sf <- st_buffer(clusters_sf, dist = radius_meters)
+
+# Join clusters and population_points
+joined_data <- st_join(ken_general_2020_cropped_sf, clusters_circles_sf, join = st_within)
+
+# Aggregate the sum of the population density for each polygon (cluster)
+aggregated_pop_cluster <- aggregate(joined_data$ken_general_2020, list(joined_data$cluster_id), sum)
+
+#### Plot the clusters onto the map with population density and administrative boundaries #####
+
+### To enable the plotting of the pop-density data, convert joined geodata into df and clean it
+joined_data_df <- data.frame(joined_data)
+joined_data_df$geometry <- as.character(joined_data_df$geometry)
+joined_data_df_temp <- joined_data_df %>% 
+  separate(geometry, into = c("Longitude", "Latitude"), ",")
+joined_data_df_temp$Longitude <- as.numeric(str_remove_all(joined_data_df_temp$Longitude, "c\\("))
+joined_data_df_temp$Latitude <- as.numeric(str_remove_all(joined_data_df_temp$Latitude, "\\)"))
+
+# To enable plotting the clusters and their associated population density --> Merge the aggregated population data and the locations of the clusters and select the clusters by population weight
+aggregated_pop_cluster <- merge(data.frame(cluster_choiceset), aggregated_pop_cluster, by.x = "cluster_id", by.y = "Group.1")
+
+################ Randomly select clusters with population weights
+# Set a seed
+set.seed(92)
+selected_cluster_ids <- sample(x = aggregated_pop_cluster$cluster_id, prob = aggregated_pop_cluster$x, size = number_clusters, replace = F)
+
+# Read in a Kenya map to enable plotting it.
+Kenya_map <- st_read("gadm41_KEN_shp/gadm41_KEN_3_urban_rural_classified.shp")
+
+# PLOT IT
+ggplot() +
+  geom_sf(data = Kenya_map, color = "black") + 
+  geom_point(data = joined_data_df_temp, aes(x = Longitude, y = Latitude, color = ken_general_2020), alpha = 0.1, size = 0.00000001) +
+  geom_point(data = aggregated_pop_cluster[aggregated_pop_cluster$cluster_id %in% selected_cluster_ids,], aes(x = coords.x1, y = coords.x2, alpha = x), size = 1.609, color = "orange") +
+  scale_color_continuous(type = "viridis") +
+  theme_minimal()
+
+# Export clusters to look at them in QGIS
+selected_clusters <- clusters_sf[clusters_sf$cluster_id %in% selected_cluster_ids,]
+st_write(selected_clusters, "clusters/randomly_selected_clusters.shp", append = F)
+
+```
+
+# Extracting sample size by County
+
+```{r}
+
+# Read in county level geospatial data
+Kenya_map_counties <- st_read("gadm41_KEN_shp/gadm41_KEN_1.shp")
+
+# Join county level admin data and the cluster locations
+ken_county_cluster_join <- selected_clusters %>% st_join(Kenya_map_counties, join = st_within, left = FALSE) 
+
+# Compute sample sizes by County
+table(ken_county_cluster_join$NAME_1)/sum(table(ken_county_cluster_join$NAME_1))
+
+```
+
+
+# Making recruitment easier for FOs
+
+```{r}
+
+# Which subcounties intersect with each cluster
+
+# Read in clusters + buffer them for 1mile
+selected_clusters <- st_read("clusters/randomly_selected_clusters.shp")
+selected_clusters_buffered_sf <- st_buffer(selected_clusters, dist = radius_meters)
+
+# Read in county level geospatial data - subcounties
+Kenya_map_sub_counties <- st_read("gadm41_KEN_shp/gadm41_KEN_2.shp")
+
+# 
+a <- st_intersection(Kenya_map_sub_counties, selected_clusters_buffered_sf) 
+b <- st_intersection(selected_clusters_buffered_sf, Kenya_map_sub_counties) 
+
+# Compute area for each intersection
+a$area <- st_area(a)
+
+# Compute Endline Sample Size by subcounty
+c <- data.frame(a) %>% 
+  group_by(NAME_1, NAME_2) %>% 
+  summarise(sum_area = sum(area), .groups = "drop") %>% 
+  mutate(share_area = as.numeric(sum_area/sum(sum_area))) %>% 
+  mutate(sample_size = round(share_area*8500))
+
+# Add the overraching circles to nearby subcounties
+c <- c %>% 
+  filter(NAME_1 %in% c("Nairobi", "Machakos", "Kiambu", "Kajiado")) 
+
+c[c$NAME_2 == "Mwala",]$sample_size <- c[c$NAME_2 == "Mwala",]$sample_size + 10
+c[c$NAME_2 == "Yatta",]$sample_size <- c[c$NAME_2 == "Yatta",]$sample_size + 6
+c[c$NAME_2 == "Thika Town",]$sample_size <- c[c$NAME_2 == "Thika Town",]$sample_size + 100
+c[c$NAME_2 == "Gatundu North",]$sample_size <- c[c$NAME_2 == "Gatundu North",]$sample_size + 20
+c[c$NAME_2 == "Lari",]$sample_size <- c[c$NAME_2 == "Lari",]$sample_size + 60
+c[c$NAME_2 == "Lari",]$sample_size <- c[c$NAME_2 == "Lari",]$sample_size + 30
+
+
+# Compute FOs needed 
+c$fo_needed_recruitment <- ((c$sample_size/sum(c$sample_size))*85)
+
+# Export to Gsheets
+range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
+            c[,c(1,2,5,6)])
+
+
+
+```
+

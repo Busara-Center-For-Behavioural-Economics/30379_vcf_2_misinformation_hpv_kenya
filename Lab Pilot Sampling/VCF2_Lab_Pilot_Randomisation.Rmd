@@ -1,0 +1,64 @@
+---
+title: "VCF2_Lab_Pilot_Randomisation"
+author: "Jonathan Karl"
+date: '2023-09-11'
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "randomizr")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+# Helper Functions
+
+```{r}
+## Table with relative frequencies
+tblFun <- function(x){
+  tbl <- sort(table(x), decreasing = T)
+  res <- cbind(tbl,sort(round(prop.table(tbl)*100,2), decreasing = T))
+  colnames(res) <- c('Count','Percentage')
+  res
+}
+```
+
+# Read in ID data from Recruitment sheet
+
+## Pilot Data
+
+```{r}
+
+# Read in data
+lab_pilot_recruit_data <- read_sheet("https://docs.google.com/spreadsheets/d/1Kyi1j640g6pliUC_XtewQnr4ZHySKp46S9p2JGqgpyg/edit#gid=84028558", sheet = "Recruited respondents")
+
+# Retain only the ID column
+lab_pilot_recruit_data <- lab_pilot_recruit_data[,"ID"]
+
+# Set seed 
+set.seed(4)
+
+# Randomly allocate to treatment groups
+lab_pilot_recruit_data$group <- complete_ra(nrow(lab_pilot_recruit_data), num_arms = 4, conditions = c("Control", "Debunking_Doctor", "Inoculation_Video", "Inoculation_Poster"))
+
+# Showcase random allocation
+tblFun(lab_pilot_recruit_data$group)
+
+# Export csv
+write.csv(lab_pilot_recruit_data, "Data Exports/vcf_lab_pilot_random_treatment_allocation.csv", row.names = F)
+
+```
+

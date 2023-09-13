@@ -1,0 +1,150 @@
+---
+title: "VCF2_Sampling_Pilot"
+author: "Jonathan Karl"
+date: '2023-06-09'
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "sp", "googlesheets4","rgdal", "rgeos", "raster", "sf")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+# Helper Functions
+
+```{r}
+## Table with relative frequencies
+tblFun <- function(x){
+  tbl <- sort(table(x), decreasing = T)
+  res <- cbind(tbl,sort(round(prop.table(tbl)*100,2), decreasing = T))
+  colnames(res) <- c('Count','Percentage')
+  res
+}
+
+## Two Variable Table
+tblFun_II <- function(x, y){
+  tbl <- table(x, y)
+  res <- apply(tbl, MARGIN = 2, FUN = function(x) round(prop.table(x)*100,2))
+  res
+}
+```
+
+# Caregiver Pilot
+
+## Pilot Data
+
+```{r}
+
+# Read in data
+pilot_sampling_data <- read.csv("VCF2 - RCT - Recruitment Script - Caregivers_WIDE.csv")
+attach(pilot_sampling_data)
+
+# Create new data frame with 1) name of participant, 2) their hairdressers name, 3) hairdressers phone number, 4) hairdresser location --> then export that data
+data.frame(B1_name, B13_hairdressername, B11a_phonenumber, B14_hairdresserlocation) %>% drop_na() %>% arrange(B11a_phonenumber) %>% write.csv("Data Exports/pilot_hairdresser_information.csv")
+
+```
+
+## Summary Stats
+
+```{r}
+
+# Participant Child information
+tblFun(B6_children)
+tblFun(B6a_number)
+
+# Awareness HPV
+tblFun(B9a_knowhpv)
+tblFun(B9b_knowhpvvacc)
+
+# Hairdresser consent
+tblFun(consent_hairdresser)
+tblFun(B10_typehairdresser)
+
+# Hairdresser Information
+tblFun(B11_hairdresserphonenumber)
+nrow(pilot_sampling_data)/length(unique(na.omit(B11a_phonenumber)))
+tblFun(B12_alternativepn)
+tblFun(B12a_alternativepn)
+tblFun(B13_hairdressername)
+tblFun(B14_hairdresserlocation)
+tblFun(B15_hairdresserfreq)
+
+tblFun(B2_gender)
+tblFun(B4_countylive)
+```
+
+# Hairdresser Pilot
+
+## Read Data
+
+```{r}
+# Read in data
+pilot_sampling_data <- read.csv("VCF2 - RCT - Recruitment Script - Hairdressers_WIDE.csv")
+attach(pilot_sampling_data)
+```
+
+## Summary Stats
+
+```{r}
+# How many consented? --> All!
+tblFun(consent) 
+
+# What is the gender and age distribution
+tblFun(B2_gender) # --> 91% Female
+
+tblFun(B3_age) # --> More than 75% between 25-44
+# 1	<18 years old
+# 2	18-24 years
+# 3	25-34 years
+# 4	35-44 years
+# 5	45-59 years
+# 6	60+ years
+
+# How long have hairdressers been doing this job? --> All longer than 6 months
+tblFun(B5_long)
+
+# Do hairdressers have a smartphone? --> 85% have a smartphone
+tblFun(B7_smartphone)
+tblFun(B7_shared)
+
+# Do the hairdressers have children? --> 94% have children
+tblFun(B6_children)
+hairdresser_children_age <- c(B6d_age_1, B6d_age_2,B6d_age_3,B6d_age_4,B6d_age_5)
+hairdresser_children_gender <- c(B6c_gender_1, B6c_gender_2, B6c_gender_3, B6c_gender_4, B6c_gender_5)
+mean(hairdresser_children_age < 8 & hairdresser_children_age < 15, na.rm = T) # --> 37% of children are between 10-14
+mean(hairdresser_children_gender == 2 & hairdresser_children_age < 8 & hairdresser_children_age < 15, na.rm = T) # --> 16% of children are between 10-14 and girls
+
+
+# Do hairdressers know about HPV and the HPV vaccine?
+tblFun(B9a_knowhpv) # --> 66% know about HPV 
+tblFun(B9b_knowhpvvacc) # --> 76% know about the HPV vaccine....
+
+# Would hairdressers be useful to help with recruitment?
+tblFun(B11_clients) # 40% of hairdressers have clients with daughters between 10 and 14.
+tblFun(B11a_share) # 34% of hairdressers would be willing to share further contacts.
+length(unique(B11c_clientphonenumber_1)) # 13 phone numbers were shared
+
+# How often do the referred clients come visit? --> Most visit monthly (66%), some weekly (16%), some than monthly (16%)
+tblFun(B11e_often_1)
+# 1	More often than once a week
+# 2	Weekly
+# 3	Monthly
+# 4	Every 2 months
+# 5	Less frequently
+
+```
+
