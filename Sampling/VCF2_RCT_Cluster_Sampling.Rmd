@@ -24,57 +24,6 @@ invisible(lapply(pkgs,library,character.only=TRUE))
 rm(miss_pkgs, pkgs)
 ```
 
-```{r}
-nairobi <- 4397073
-kajiado <- 1117840
-kiambu <- 2454504
-machakos <- 1421932
-
-total_study_area_pop <- nairobi + kajiado + kiambu + machakos
-
-# The real stuff
-recruitment <- 16538
-baseline <- 12250
-endline <- 8500
-
-
-# For IRB
-recruitment <- 19250
-baseline <- 14000
-endline <- 10000
-
-
-
-# Nairobi
-round((nairobi/total_study_area_pop)*recruitment/4) # Recruitment
-round((nairobi/total_study_area_pop)*baseline/4) # Baseline
-round((nairobi/total_study_area_pop)*endline/4)# Endline
-
-# Kajiado
-round((kajiado/total_study_area_pop)*recruitment/4) # Recruitment
-round((kajiado/total_study_area_pop)*baseline/4) # Baseline
-round((kajiado/total_study_area_pop)*endline/4) # Endline
-
-# Kiambu
-round((kiambu/total_study_area_pop)*recruitment/4) # Recruitment
-round((kiambu/total_study_area_pop)*baseline/4) # Baseline
-round((kiambu/total_study_area_pop)*endline/4) # Endline
-
-# Machakos
-round((machakos/total_study_area_pop)*recruitment/4) # Recruitment
-round((machakos/total_study_area_pop)*baseline/4) # Baseline
-round((machakos/total_study_area_pop)*endline/4) # Endline
-
-
-
-# Final sample into clusters - How many clusters per place?
-as.matrix(c(nairobi = round((nairobi/total_study_area_pop)*endline)/85,
-kajiado = round((kajiado/total_study_area_pop)*endline)/85,
-kiambu = round((kiambu/total_study_area_pop)*endline)/85,
-machakos = round((machakos/total_study_area_pop)*endline)/85))
-
-```
-
 *From the Paper No margin, no mission? A field experiment on incentives for public service delivery:* To implement the design, we first conducted a census of all hair salons in Lusaka, collecting GPS coordinates and numerous salon and stylist characteristics. We then imposed a grid on the GPS-mapped locations of the salons, to divide the city into equal geographical areas of 650 by 650 m each. We excluded a buffer of 75 m on all sides of the grid cell, resulting in at least 150 m between salons in adjacent areas. The resulting areas, each measuring 250,000 m2, served as the unit of randomization. Salons located in buffer areas were not invited to join the program. The final sample for randomization consists of 205 distinct neighbourhoods, containing 1222 hair salons.
 
 *Jonathan's Approach:* This study is design for urban and peri-urban areas in and around Nairobi. Accordingly, we labelled all wards in Nairobi and surrounding counties (Kiambu, Machakos, Kajiado) with the help of Field Officers as rural, peri-urban and urban. Within the wards labelled as peri-urban and urban, we randomly allocated circular clusters with a 1-mile radius (the minimum geographical targeting area Facebook's advertising ecosystem allows). 
@@ -157,7 +106,7 @@ while(length(points) < 1000) {
 plot(shp_kenya_adm3)
 points(points, col = "red", pch = 1)
 
-
+# Export
 points_df <- SpatialPointsDataFrame(coords = data.frame(points), data = data.frame(cluster_id = 1:length(points)))
 temp <- as(points,"SpatialPointsDataFrame")
 writeOGR(obj=points_df, dsn="clusters", layer="points", driver="ESRI Shapefile", overwrite_layer = TRUE) # this is in equal area projection
@@ -221,6 +170,8 @@ aggregated_pop_cluster <- merge(data.frame(cluster_choiceset), aggregated_pop_cl
 ################ Randomly select clusters with population weights
 # Set a seed
 set.seed(92)
+
+# Sample
 selected_cluster_ids <- sample(x = aggregated_pop_cluster$cluster_id, prob = aggregated_pop_cluster$x, size = number_clusters, replace = F)
 
 # Read in a Kenya map to enable plotting it.
@@ -294,15 +245,12 @@ c[c$NAME_2 == "Gatundu North",]$sample_size <- c[c$NAME_2 == "Gatundu North",]$s
 c[c$NAME_2 == "Lari",]$sample_size <- c[c$NAME_2 == "Lari",]$sample_size + 60
 c[c$NAME_2 == "Lari",]$sample_size <- c[c$NAME_2 == "Lari",]$sample_size + 30
 
-
 # Compute FOs needed 
 c$fo_needed_recruitment <- ((c$sample_size/sum(c$sample_size))*85)
 
 # Export to Gsheets
 range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
             c[,c(1,2,5,6)])
-
-
 
 ```
 
