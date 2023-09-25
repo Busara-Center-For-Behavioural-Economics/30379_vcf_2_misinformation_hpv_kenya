@@ -62,3 +62,44 @@ write.csv(lab_pilot_recruit_data, "Data Exports/vcf_lab_pilot_random_treatment_a
 
 ```
 
+# Export randomised allocation to gsheet
+
+```{r}
+
+# Read in data
+lab_pilot_recruit_data <- read.csv("Data Exports/vcf_lab_pilot_random_treatment_allocation.csv")
+
+# Read in the recruitment sheet to match the ids into the correct order
+lab_pilot_recruit_sheet <- read_sheet("https://docs.google.com/spreadsheets/d/1Kyi1j640g6pliUC_XtewQnr4ZHySKp46S9p2JGqgpyg/edit#gid=84028558", sheet = "Recruited respondents")
+
+# Sort IDs to match
+match_ids <- match(lab_pilot_recruit_sheet$ID, lab_pilot_recruit_data$ID)
+
+range_write(ss = "https://docs.google.com/spreadsheets/d/1Kyi1j640g6pliUC_XtewQnr4ZHySKp46S9p2JGqgpyg/edit#gid=84028558", 
+            sheet = "Recruited respondents",
+            data = data.frame(lab_pilot_recruit_data$group[match_ids]),
+            range = "V1", 
+            reformat = F)
+
+```
+
+# Add random Test-IDs
+
+```{r}
+# Read in data
+lab_pilot_recruit_data <- read.csv("Data Exports/vcf_lab_pilot_random_treatment_allocation.csv")
+
+# Generate random test ids that are NOT in the ID list
+sum(999000:999999 %in% lab_pilot_recruit_data$ID)
+
+# Add random numbers to data.frame
+test_ids_random_groups <- data.frame(ID = 999000:999999, group = complete_ra(length(999000:999999), num_arms = 4, conditions = c("Control", "Debunking_Doctor", "Inoculation_Video", "Inoculation_Poster")))
+
+# Merge with actual ID data.frame
+lab_pilot_recruit_data_plus_test_ids <- rbind(lab_pilot_recruit_data, test_ids_random_groups)
+
+# Export data
+write.csv(lab_pilot_recruit_data_plus_test_ids, "Data Exports/vcf_lab_pilot_random_treatment_allocation_plus_test_ids.csv")
+
+```
+

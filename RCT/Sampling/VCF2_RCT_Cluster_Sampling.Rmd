@@ -12,7 +12,7 @@ rm(list = ls())
 knitr::opts_knit$set(options(scipen=999))
 
 # Install and load all the packages that will be used for analysis
-pkgs <- c("tidyverse", "sp", "googlesheets4","rgdal", "rgeos", "raster", "sf")
+pkgs <- c("tidyverse", "sp", "googlesheets4","rgdal", "rgeos", "raster", "sf", "randomizr")
 
 miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
 if(length(miss_pkgs)>0){
@@ -191,48 +191,48 @@ st_write(selected_clusters, "clusters/randomly_selected_clusters.shp", append = 
 
 ```
 
-# Extracting sample size by County
+# Allocating clusters to Treatment Groups
 
 ```{r}
 
-# Read in county level geospatial data
-Kenya_map_counties <- st_read("gadm41_KEN_shp/gadm41_KEN_1.shp")
+# Read in buffered clusters
+selected_buffered_clusters <- st_read("clusters/randomly_selected_clusters_buffered.shp")
 
-# Join county level admin data and the cluster locations
-ken_county_cluster_join <- selected_clusters %>% st_join(Kenya_map_counties, join = st_within, left = FALSE) 
+# Randomly allocate clusters to treatment groups
+set.seed(4)
+selected_buffered_clusters$group <- complete_ra(nrow(selected_buffered_clusters), num_arms = 4, conditions = c("Control", "Online_Only", "Offline_Only", "Online_Offline"))
 
-# Compute sample sizes by County
-table(ken_county_cluster_join$NAME_1)/sum(table(ken_county_cluster_join$NAME_1))
+# Export new Shapefile
+st_crs(selected_buffered_clusters) <- st_crs(st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_3_urban_rural_classified.shp"))
+st_write(selected_buffered_clusters, "clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp", append = F)
 
 ```
 
 
-# Making recruitment easier for FOs
+
+# Making recruitment easier for FOs (Sample Sizes by County and Subcounty)
 
 ```{r}
 
-# Which subcounties intersect with each cluster
-
-# Read in clusters + buffer them for 1mile
-selected_clusters <- st_read("clusters/randomly_selected_clusters.shp")
-selected_clusters_buffered_sf <- st_buffer(selected_clusters, dist = radius_meters)
+# Read in clusters
+selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
 
 # Read in county level geospatial data - subcounties
-Kenya_map_sub_counties <- st_read("gadm41_KEN_shp/gadm41_KEN_2.shp")
+Kenya_map_sub_counties <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_2.shp")
 
-# 
-a <- st_intersection(Kenya_map_sub_counties, selected_clusters_buffered_sf) 
-b <- st_intersection(selected_clusters_buffered_sf, Kenya_map_sub_counties) 
-
-# Compute area for each intersection
-a$area <- st_area(a)
+# Intersect subcounty map with clusters
+intersection_subcounty_map_clusters <- st_intersection(Kenya_map_ward_level, selected_clusters_buffered_allocated) 
+intersection_subcounty_map_clusters$area <- st_area(intersection_subcounty_map_clusters)
 
 # Compute Endline Sample Size by subcounty
-c <- data.frame(a) %>% 
-  group_by(NAME_1, NAME_2) %>% 
+data.frame(intersection_subcounty_map_clusters) %>% 
+  group_by(NAME_1, NAME_2) %>% # BIG CONSTRUCTION SITEEEEEEEEEEEEE ONLY FROM 227 TO 235
   summarise(sum_area = sum(area), .groups = "drop") %>% 
   mutate(share_area = as.numeric(sum_area/sum(sum_area))) %>% 
-  mutate(sample_size = round(share_area*8500))
+  ungroup() %>% 
+  mutate(sample_size_recruitment = )
+  mutate(sample_size_endline = round(share_area*8500)) %>% 
+  mutate(FOs_needed_endline = (sample_size_endline/sum(sample_size_endline))*67))
 
 # Add the overraching circles to nearby subcounties
 c <- c %>% 
@@ -246,11 +246,102 @@ c[c$NAME_2 == "Lari",]$sample_size <- c[c$NAME_2 == "Lari",]$sample_size + 60
 c[c$NAME_2 == "Lari",]$sample_size <- c[c$NAME_2 == "Lari",]$sample_size + 30
 
 # Compute FOs needed 
-c$fo_needed_recruitment <- ((c$sample_size/sum(c$sample_size))*85)
+c$fo_needed_recruitment_endline <- ((c$sample_size/sum(c$sample_size))*85)
 
 # Export to Gsheets
 range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
+            sheet = "FO Needs",
             c[,c(1,2,5,6)])
+
+```
+
+# Export List of Cluster IDs and where they are (+ sample sizes) (also export sample size by county and subcounty)
+
+```{r}
+
+# Read in clusters
+selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
+
+# Read in county level geospatial data - wards
+Kenya_map_ward_level <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_3_urban_rural_classified.shp")
+
+# Intersect ward map with clusters
+intersection_ward_map_clusters <- st_intersection(Kenya_map_ward_level, selected_clusters_buffered_allocated) 
+intersection_ward_map_clusters$area <- st_area(intersection_ward_map_clusters)
+
+# Before computing areas with which the cluster overlaps and the group the cluster is allocated to prep the recruitment discrepancy in sample size for the clusters
+recruitment_baseline_samplesize_discrepancy <- c("Control" = 121, "Online_Only" = 121, "Offline_Only" = 143, "Online_Offline" = 143)
+
+intersection_ward_map_clusters_df <- data.frame(intersection_ward_map_clusters) %>% 
+  group_by(cluster_id) %>% 
+  summarise(group = unique(group), County = toString(unique(NAME_1)), Sub_County = toString(unique(NAME_2)), Ward = toString(unique(NAME_3))) %>%
+  ungroup() %>% 
+  mutate(sample_size_recruitment_baseline = unname(recruitment_samplesize_discrepancy[group])) %>% 
+  mutate(sample_size_endline = 85) %>% 
+  arrange(County, Sub_County)
+  
+
+# Export to Gsheets
+range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
+            sheet = "Clusters Locations & Sample Sizes",
+            intersection_ward_map_clusters_df, 
+            reformat = F)
+
+
+
+# EXPORT Sample size by County and Subcounty
+sample_size_county_subcounty <- data.frame(intersection_ward_map_clusters) %>% 
+  group_by(NAME_1, NAME_2) %>% 
+  summarise() %>%
+  ungroup() %>% 
+  mutate(sample_size_recruitment = unname(recruitment_samplesize_discrepancy[group])) %>% 
+  mutate(sample_size_baseline = 106) %>% 
+  mutate(sample_size_endline = 85) %>% 
+  arrange(County, Sub_County)
+  
+
+# Export to Gsheets
+range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
+            sheet = "Clusters Locations & Sample Sizes",
+            intersection_ward_map_clusters_df, 
+            reformat = F)
+
+```
+
+# Assign responsibility to SFO by Cluster
+
+```{r}
+
+# Read in clusters
+selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
+
+# Read in county level geospatial data
+Kenya_map_county_level <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_1.shp")
+
+# Intersect ward map with clusters
+intersection_county_map_clusters <- st_intersection(Kenya_map_county_level, selected_clusters_buffered_allocated) 
+intersection_county_map_clusters$area <- st_area(intersection_county_map_clusters)
+
+# Compute the majority share by cluster and assign SFOs (highlight clusters that are heavily on the border where the majority is below < 75%)
+cluster_bycounty_share <- data.frame(intersection_county_map_clusters) %>% 
+  group_by(cluster_id) %>% 
+  summarise(NAME_1, share_cluster_area = as.numeric(area/sum(area))) %>% 
+  filter(NAME_1 %in% c("Nairobi", "Machakos", "Kajiado", "Kiambu")) %>% 
+  filter(share_cluster_area == max(share_cluster_area)) %>% 
+  arrange(NAME_1)
+
+fo_assigned_county <- c("Nairobi" = "Martin", "Machakos" = "Billy", "Kajiado" = "Dennis", "Kiambu" = "Naom")
+cluster_bycounty_share$sfo_responsible <- unname(fo_assigned_county[cluster_bycounty_share$NAME_1])
+
+# Format into percentages
+cluster_bycounty_share$share_cluster_area_percentage <- paste0(round(cluster_bycounty_share$share_cluster_area*100), "%")
+cluster_bycounty_share$share_cluster_area <- NULL
+
+# Export to Gsheets
+range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
+            sheet = "Clusters Probability of Data Collecton Issues",
+            cluster_bycounty_share[,1:3], 
+            reformat = F)
 
 ```
 

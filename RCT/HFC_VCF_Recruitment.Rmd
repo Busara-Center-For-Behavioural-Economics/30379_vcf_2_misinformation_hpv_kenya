@@ -92,6 +92,7 @@ tblFun_II(caregivers_data$`County_ residency`, caregivers_data$Subcounty)
 
 ```
 
+
 # Hairdressers
 Keep track of recruitment progress to cross-check with Isaacs tracking (and vice versa)
 Forecast recruitment timeline
@@ -108,11 +109,11 @@ How many per FO
 
 ```
 
+
 # Matching
 
 - Plan for tracking match between hairdresser<>participant (also export to Gsheets so that Isaac can mark which participant whose hairdresser rejected has been informed)
 - By FO --> Match with Hairdressers (who is (not) ineligible). What is the rate of ineligibility?
-
 
 ```{r}
 
