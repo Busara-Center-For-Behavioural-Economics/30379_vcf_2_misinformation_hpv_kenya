@@ -42,7 +42,6 @@ tblFun_II <- function(x, y){
 
 ```
 
-
 # Participants
 
 ## TEMP - Lab Pilots
@@ -62,7 +61,6 @@ tblFun_II(caregivers_data$`County_ residency`, caregivers_data$Subcounty)
 #caregivers_data <- read.csv("Raw Data/VCF2_RCT_Recruitment_Caregivers.csv")
 
 ```
-
 
 1. Base Checks
 - Do participants match the recruitment criteria?
@@ -92,7 +90,6 @@ tblFun_II(caregivers_data$`County_ residency`, caregivers_data$Subcounty)
 
 ```
 
-
 # Hairdressers
 Keep track of recruitment progress to cross-check with Isaacs tracking (and vice versa)
 Forecast recruitment timeline
@@ -108,7 +105,6 @@ How many per FO
 ```{r}
 
 ```
-
 
 # Matching
 

@@ -83,6 +83,30 @@ range_write(ss = "https://docs.google.com/spreadsheets/d/1Kyi1j640g6pliUC_XtewQn
 
 ```
 
+# Randomise additional ID into the groups
+
+```{r}
+
+# Read in additional recruit data
+additional_recruits <- readxl::read_xlsx("VCF Lab Trial Recruitment List 2.xlsx")
+
+# Retain only the ID column
+additional_recruits <- additional_recruits[,"ID"]
+
+# Set seed 
+set.seed(4)
+
+# Randomly allocate to treatment groups
+additional_recruits$group <- complete_ra(nrow(additional_recruits), num_arms = 4, conditions = c("Control", "Debunking_Doctor", "Inoculation_Video", "Inoculation_Poster"))
+
+# Showcase random allocation
+tblFun(additional_recruits$group)
+
+# Export csv
+write.csv(additional_recruits, "Data Exports/vcf_lab_pilot_random_treatment_allocation_v2_additional.csv", row.names = F)
+
+```
+
 # Add random Test-IDs
 
 ```{r}

@@ -1,0 +1,1157 @@
+---
+title: "VCF - Lab Pilots - Analysis"
+author: "Jonathan Karl"
+date: '2023-09-26'
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "purrr", "DescTools")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+# Helper Functions
+
+```{r}
+
+tblFun_II <- function(x, y){
+  tbl <- table(x, y)
+  res <- apply(tbl, MARGIN = 2, FUN = function(x) round(prop.table(x)*100,2))
+  res
+}
+
+```
+
+# Read in the data
+
+```{r}
+
+# Read in the directories for the separate data files for each sessions
+folders_complete_survey_directories <- list.files("Raw Data", full.names = TRUE)
+csv_directories <- list.files(folders_complete_survey_directories, pattern = "^[all]", full.names = TRUE)
+combined <- map_df(csv_directories, read.csv, header = TRUE)
+
+# Clean environment
+rm(folders_complete_survey_directories, csv_directories)
+
+```
+
+# Did people actually watch the videos
+
+```{r}
+folders_complete_survey_directories <- list.files("Raw Data", full.names = TRUE)
+csv_directories <- list.files(folders_complete_survey_directories, pattern = "^Time", full.names = TRUE)
+combined_time <- map_df(csv_directories, read.csv, header = TRUE)
+
+# Filter and summarise by treatment group
+only_treatment_screen <- combined_time %>% 
+  filter(page_index < 27 & page_index > 22)
+
+only_treatment_screen %>% 
+  group_by(page_name) %>% 
+  summarise(mean(seconds_on_page))
+
+# How long have people been waiting by treatment group after the treatment
+post_treatment_waiting_screen <- combined_time %>% 
+  filter(page_index == 27)
+
+# Clean environment
+rm(folders_complete_survey_directories, csv_directories, post_treatment_waiting_screen, only_treatment_screen, combined_time)
+```
+
+# Truth Discernment
+
+## Cleaning
+
+```{r}
+truth_discernment <- combined[,c("introduction.1.player.assigned_group", "introduction.1.player.headlines_order", paste0("survey.1.player.truth_discern_", 1:16))] %>% 
+  drop_na()
+
+# Coding the responses as correct or incorrect
+headlines_base_order <- c("Girls vaccinated against HPV will not get their menstrual cycles during their lifetime.",
+ "The HPV vaccine exposes your child to cancer.",
+ "If adolescent girls take the vaccine, they will not be able to have children",
+ "HPV vaccine is part of a mass sterilisation program run by the government.",
+ "Certain types of HPV can cause genital warts and cervical and penile cancer",
+ "9 women die in Kenya every day due to cervical cancer ",
+ "There exists plenty of scientific evidence that the HPV vaccine is safe and effective, protecting against cervical cancer",
+ "The HPV vaccine does not cause infertility",
+ "Wearing masks, maintaining social distancing and washing your hands is ineffective and doesn’t protect COVID-19 at all.",
+ "Secondary education in Kenya is only available for children between the ages of 12 and 18.",
+ "The eye scan by World coin is linked to the Illumati",
+ "Microwaves cause cancer by converting the nutrients of food into cancer-causing agents.",
+ "The leading causes of death in Africa are communicable diseases, mainly lower respiratory tract infections, diarrhoeal diseases, HIV/Aids, malaria and tuberculosis.",
+"Safaricom is the largest telecommunications provider in Kenya. ",
+"Nairobi is home to the largest slum in Africa.",
+"Kenya is a member of the East African Community.")
+
+true_false_coding <- c("1" = F, "2" = F,  "3" = F, "4" = F, "5" = T, "6" = T, "7" = T, "8" = T, "9" = F, "10" = F, "11" = F, "12" = F, "13" = T, "14" = T, "15" = T, "16" = T)
+
+# Prep headline order
+headlines_order_clean <- str_remove_all(truth_discernment$introduction.1.player.headlines_order, '\\]|\\[')
+
+# Iterate through the rows 
+for(i in 1:nrow(truth_discernment)){
+  truth_discernment[i,-c(1:2)] <- unlist(truth_discernment[i,-c(1:2)])[as.numeric(unlist(str_split(headlines_order_clean[i], ", ")))+1]
+}
+truth_discernment <- truth_discernment[,-2] # remove headline order
+
+```
+
+## Helper Functions
+
+```{r}
+
+# Compute the AUC
+compute_auc <- function(truth_discernment = truth_discernment, true_false_coding = true_false_coding){
+  # Iterate through each participant, compute hit-rate and false alarm rate at each decision-threshold --> compute AUC
+  auc_all <- NULL
+  for(i in 1:nrow(truth_discernment)){
+    
+    hit_rate_all_thresholds <- NULL
+    false_alarm_rate_all_thresholds <- NULL
+    
+    for(threshold in 1:5){
+      
+      # Given a threshold, how did people perceive the post (true/false)
+      perceived_binary_coded <- ifelse(truth_discernment[i,-1] > threshold, "Perceived_True", "Perceived_False")
+      
+      # Code the hit rate and false alarm rate
+      hit_rate <- sum(ifelse(perceived_binary_coded == "Perceived_False" & true_false_coding == FALSE, 1, 0))/(nrow(truth_discernment)/2)
+      false_alarm_rate <- sum(ifelse(perceived_binary_coded == "Perceived_False" & true_false_coding == TRUE, 1, 0))/(nrow(truth_discernment)/2)
+      
+      # Add hit rate and false alarm rate to vector storing them for all thresholds
+      hit_rate_all_thresholds <- c(hit_rate_all_thresholds, hit_rate)
+      false_alarm_rate_all_thresholds <- c(false_alarm_rate_all_thresholds, false_alarm_rate)
+      
+    }
+    # Compute AUC and add to vector
+    auc_temp <- AUC(false_alarm_rate_all_thresholds, hit_rate_all_thresholds)
+    auc_all <- c(auc_all, auc_temp)
+    
+  }
+  return(auc_all)
+}
+
+```
+
+## Analysis
+
+```{r}
+
+################################# DATASET IS CLEAN NOW
+
+# Compute AUC for each respondent
+
+# Add the AUC variable
+truth_discernment$auc <- compute_auc(truth_discernment, true_false_coding)
+
+############################### AUC OUTCOME IS CREATED NOW
+  
+# Is there an overall effect?
+TukeyHSD(aov(auc ~ introduction.1.player.assigned_group, data = truth_discernment))
+
+truth_discernment %>% 
+  group_by(introduction.1.player.assigned_group) %>% 
+  summarise(mean(auc))
+
+
+# Is there a HPV specific effect
+truth_discernment$auc_hpv_only <- compute_auc(truth_discernment[,1:9], true_false_coding[1:8])
+TukeyHSD(aov(auc_hpv_only ~ introduction.1.player.assigned_group, data = truth_discernment))
+
+# Is there an effect for Non-HPV
+truth_discernment$auc_non_hpv <- compute_auc(truth_discernment[,c(1,10:17)], true_false_coding[9:16])
+TukeyHSD(aov(auc_non_hpv ~ introduction.1.player.assigned_group, data = truth_discernment))
+
+# Is there an effect for the infertility myth
+TukeyHSD(aov(survey.1.player.truth_discern_3 ~ introduction.1.player.assigned_group, data = truth_discernment))
+TukeyHSD(aov(survey.1.player.truth_discern_3 == 5 ~ introduction.1.player.assigned_group, data = truth_discernment)) # Do people move away from the extremes?
+
+tblFun_II(truth_discernment$survey.1.player.truth_discern_3, truth_discernment$introduction.1.player.assigned_group)
+
+```
+
+```{r}
+# Clean Environment
+rm(i, headlines_base_order, headlines_order_clean, truth_discernment, true_false_coding)
+```
+
+# Detecting Manipulation
+
+## Cleaning
+
+```{r}
+
+# Create temp df
+manipulativeness_identification <- combined[,c("introduction.1.player.assigned_group", "introduction.1.player.full_posts_order", "introduction.1.player.bottom_posts_order", paste0("survey.1.player.detect_misinfo_quiz", 1:16,"_1"))]
+
+manipulativeness_identification[manipulativeness_identification == ""] <- NA 
+manipulativeness_identification <- manipulativeness_identification %>% 
+  drop_na()
+
+# Bring order to chaos
+# 4+1+4+1+3+1+2 is the sequency (the 1s are the fulls)
+
+# Correctly order the fulls
+fulls_order_clean <- str_remove_all(manipulativeness_identification$introduction.1.player.full_posts_order, '\\]|\\[')
+
+for(i in 1:nrow(manipulativeness_identification)){
+  manipulativeness_identification[,-c(1:3)][i,c(5, 10, 14)] <- unlist(manipulativeness_identification[,-c(1:3)][i,c(5, 10, 14)])[as.numeric(unlist(str_split(fulls_order_clean[i], ", ")))]
+}
+
+# Correctly order the halfs
+halfs_order_clean <- str_remove_all(manipulativeness_identification$introduction.1.player.bottom_posts_order, '\\]|\\[')
+
+for(i in 1:nrow(manipulativeness_identification)){
+  manipulativeness_identification[,-c(1:3)][i,c(1:4, 6:9, 11:13, 15:16)] <- unlist(manipulativeness_identification[,-c(1:3)][i,c(1:4, 6:9, 11:13, 15:16)])[as.numeric(unlist(str_split(halfs_order_clean[i], ", ")))]
+}
+
+# Remove the order variables
+manipulativeness_identification <- manipulativeness_identification[,-c(2:3)]
+
+# If Yes == 1, if No == 0
+#manipulativeness_identification[,-1] <- ifelse(manipulativeness_identification[,-1] == "Yes", 1, 0)
+
+# Convert group variable into factor
+manipulativeness_identification$introduction.1.player.assigned_group <- as.factor(manipulativeness_identification$introduction.1.player.assigned_group)
+
+```
+
+## Helper Functions
+
+```{r}
+
+# Function to compute confusion matrix for each participant across all posts
+compute_confusion_matrix <- function(participant_row) {
+  predicted <- as.factor(unlist(participant_row))
+  confusion_matrix <- table(manipulativeness_actual, predicted)
+  TP <- ifelse("Yes" %in% levels(manipulativeness_actual) && "Yes" %in% levels(predicted), confusion_matrix["Yes", "Yes"], 0)
+  FP <- ifelse("No" %in% levels(manipulativeness_actual) && "Yes" %in% levels(predicted), confusion_matrix["No", "Yes"], 0)
+  TN <- ifelse("No" %in% levels(manipulativeness_actual) && "No" %in% levels(predicted), confusion_matrix["No", "No"], 0)
+  FN <- ifelse("Yes" %in% levels(manipulativeness_actual) && "No" %in% levels(predicted), confusion_matrix["Yes", "No"], 0)
+  
+  # Calculate rates
+  TPR <- TP / (TP + FN)
+  FPR <- FP / (FP + TN)
+  TNR <- TN / (FP + TN)
+  FNR <- FN / (TP + FN)
+  
+  return(data.frame(TPR, FPR, TNR, FNR))
+}
+
+# Function to compute confusion matrix for each participant for specific posts
+compute_confusion_matrix_specific_posts <- function(row, post_number) {
+  predicted <- as.factor(manipulativeness_identification[row, post_number+1])
+  confusion_matrix <- table(manipulativeness_actual[post_number], predicted)
+  TP <- ifelse("Yes" %in% levels(manipulativeness_actual) && "Yes" %in% levels(predicted), confusion_matrix["Yes", "Yes"], 0)
+  FP <- ifelse("No" %in% levels(manipulativeness_actual) && "Yes" %in% levels(predicted), confusion_matrix["No", "Yes"], 0)
+  TN <- ifelse("No" %in% levels(manipulativeness_actual) && "No" %in% levels(predicted), confusion_matrix["No", "No"], 0)
+  FN <- ifelse("Yes" %in% levels(manipulativeness_actual) && "No" %in% levels(predicted), confusion_matrix["Yes", "No"], 0)
+  
+  # Calculate rates and Fix NaNs
+  TPR <- TP / (TP + FN)
+  TPR[is.nan(TPR)] <- 0 
+  
+  FPR <- FP / (FP + TN) 
+  FPR[is.nan(FPR)] <- 0 
+  
+  TNR <- TN / (FP + TN)
+  TNR[is.nan(TNR)] <- 0 
+  
+  FNR <- FN / (TP + FN)
+  FNR[is.nan(FNR)] <- 0 
+  
+  return(data.frame(TPR, FPR, TNR, FNR))
+}
+
+# Run ANOVA for each rate
+anova_TPR_TNR_FPR_FNR_manipulation <- function(confusion_matrix_df){
+  
+  # 1. True Positive Rate
+  anova_temp <- TukeyHSD(aov(confusion_matrix_df$TPR ~ manipulativeness_identification$introduction.1.player.assigned_group))
+  print("TRUE POSITIVE RATE")
+  print(anova_temp$`manipulativeness_identification$introduction.1.player.assigned_group`)
+  
+  # 2. True Negative Rate
+  anova_temp <- TukeyHSD(aov(confusion_matrix_df$TNR ~ manipulativeness_identification$introduction.1.player.assigned_group))
+  print("TRUE NEGATIVE RATE")
+  print(anova_temp$`manipulativeness_identification$introduction.1.player.assigned_group`)
+  
+  # 3. False Negative Rate
+  anova_temp <- TukeyHSD(aov(confusion_matrix_df$FNR ~ manipulativeness_identification$introduction.1.player.assigned_group))
+  print("FALSE NEGATIVE RATE")
+  print(anova_temp$`manipulativeness_identification$introduction.1.player.assigned_group`)
+  
+  # 4. False Positive Rate
+  anova_temp <- TukeyHSD(aov(confusion_matrix_df$FPR ~ manipulativeness_identification$introduction.1.player.assigned_group))
+  print("FALSE POSITIVE RATE")
+  print(anova_temp$`manipulativeness_identification$introduction.1.player.assigned_group`)
+
+}
+
+```
+
+## Analysis
+
+```{r}
+############################## DATASET IS CLEAN NOW
+
+# What posts are actually manipulative? ("Yes" == Manipulative & "No" == Non-Manipulative)
+manipulativeness_actual <- as.factor(c("1" = "Yes", "2" = "Yes",  "3" = "Yes", "4" = "Yes", "5" = "Yes", "6" = "Yes", "7" = "Yes", "8" = "No", "9" = "No", "10" = "Yes", "11" = "No", "12" = "No", "13" = "No", "14" = "Yes", "15" = "No", "16" = "No"))
+
+# Compute confusion matrix
+
+# Apply the function to each participant's row and combine results into a dataframe
+confusion_matrices <- lapply(1:nrow(manipulativeness_identification), function(i) compute_confusion_matrix(manipulativeness_identification[i,-1]))
+confusion_matrix_df <- do.call(rbind, confusion_matrices)
+
+################################### OUTCOME VARIABLES CREATED NOW
+
+# Hypotheses Testing
+# 1. True Positive Rate ⬆️ for Online, Offline & Online_Offline
+TukeyHSD(aov(confusion_matrix_df$TPR ~ manipulativeness_identification$introduction.1.player.assigned_group))
+
+# 2. True Negative Rate ⬆️ for Online, Offline & Online_Offline
+TukeyHSD(aov(confusion_matrix_df$TNR ~ manipulativeness_identification$introduction.1.player.assigned_group))
+
+# 3. False Negative Rate ⬇️ for Online, Offline & Online_Offline
+TukeyHSD(aov(confusion_matrix_df$FNR ~ manipulativeness_identification$introduction.1.player.assigned_group))
+
+# 4. False Positive Rate ⬇️ for Online, Offline & Online_Offline
+TukeyHSD(aov(confusion_matrix_df$FPR ~ manipulativeness_identification$introduction.1.player.assigned_group))
+
+# Show the differences in a data.frame
+cbind(group = manipulativeness_identification$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+  group_by(group) %>% 
+  summarise_all(list(mean))
+
+# Secondary Analysis
+# 1. Repeat the primary analysis by post --> this will inform if the overarching finding was driven by specific posts
+
+# POST 1 (Manipulative) - The Govt. doesn't want you to know - The HPV Vaccine causes EARLY menopause in women. BE CAREFUL!!!
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  1)))
+
+# POST 2 (Manipulative) - The HPV vaccine is part of larger, DANGEROUS program by foreign governments to stop your child from giving birth! Be scared, Be aware, Be safe!!
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  2)))
+
+# POST 3 (Manipulative) - OMG, Can you believe it?!?! Religious leaders claim that the HPV vaccine is cursed and is a product of devil worshippers and the Ministry of Health agrees!
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  3)))
+
+# POST 4 (Manipulative) - Kikuyu politicians are approving the testing of vaccines loaded with HORRIBLE and DANGEROUS chemicals and toxins on the Kalenjin people.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  4)))
+
+# POST 5 (Manipulative) - Vaccinated girls will never get their menstrual cycles. Spread the word - boycott the HPV vaccine now!
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  5)))
+
+# POST 6 (Manipulative) - Feminism is clearly an attempt by women to hide their own faults.....
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  6)))
+
+# POST 7 (Manipulative) - "I have done nothing wrong! The Nakuru Magistrate Court has wrongly accused me of fraud. The parents are liers, they are not credible. Do not trust them!" - Uasin Gishu Senator Mandago
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  7)))
+
+# POST 8 (Non-Manipulative) - The WHO and MoH recently reported that 9 Kenyan women die of cervical cancer per day.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  8)))
+
+# POST 9 (Non-Manipulative) - A recent study by the World Health Organisation (WHO) found that HPV can impact both males and females.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  9)))
+
+# POST 10 (Manipulative) - Citizen TV EXPOSES SCAM: NTV is refusing to report that the Government is knowingly spreading diseases through the airwaves and food supply!
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  10)))
+
+# POST 11 (Non-Manipulative) - The Ministry of Health has endorsed the HPV vaccine due to its potential to significantly reduce the burden of cervical cancer in Kenya.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  11)))
+
+# POST 12 (Non-Manipulative) - Speaking to reporters outside UN headquarters, UN Secretary General Guterres stressed the need to phase out fossil fuels and boost investment in renewable energy in order to tackle climate change.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  12)))
+
+# POST 13 (Non-Manipulative) - Inter Miami, a US-based football club, sign Argentinian football player Lionel Messi.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  13)))
+
+# POST 14 (Manipulative) - A post from Erik_Omondee98: Government officials have illegally manipulated the weather to cause destructive storms.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  14)))
+
+# POST 15 (Non-Manipulative) - The BBC reports that Eliud Kipchoge, an elite Kenyan marathon runner, broke his own world record during the Berlin marathon in 2022.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  15)))
+
+# POST 16 (Non-Manipulative) - Kenya's Interior Ministry has suspended the operations of cryptocurrency project Worldcoin, citing data privacy concerns.
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  16)))
+
+
+# 2. Repeat the primary analysis by group of posts (HPV vs Non-HPV) --> this will inform if the overarching finding was driven by the # groups of posts
+
+# HPV POSTS
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  c(1:3, 5, 8:9, 11))))
+
+# Non-HPV Posts
+anova_TPR_TNR_FPR_FNR_manipulation(do.call(rbind, lapply(1:nrow(manipulativeness_identification), compute_confusion_matrix_specific_posts,  c(4, 6:7, 10, 12:16))))
+
+
+# 3. Repeat all analyses by Gender & Religion - SEEMS A LITTLE OVER THE TOP
+
+```
+
+```{r}
+# Clean Environment
+rm(i, fulls_order_clean, halfs_order_clean, manipulativeness_actual, manipulativeness_identification, confusion_matrix_df, confusion_matrices)
+```
+
+
+# Identifying Manipulation Techniques
+
+```{r}
+# 4+1+4+1+3+1+2 is the sequence (the 1s are the fulls)
+
+
+posts_base_order <- c("The Govt. doesn't want you to know - The HPV Vaccine causes EARLY menopause in women. BE CAREFUL!!!", "The HPV vaccine is part of larger, DANGEROUS program by foreign governments to stop your child from giving birth! Be scared, Be aware, Be safe!!", "OMG, Can you believe it?!?! Religious leaders claim that the HPV vaccine is cursed and is a product of devil worshippers and the Ministry of Health agrees!","Kikuyu politicians are approving the testing of vaccines loaded with HORRIBLE and DANGEROUS chemicals and toxins on the Kalenjin people.", "Vaccinated girls will never get their menstrual cycles. Spread the word - boycott the HPV vaccine now!", "Feminism is clearly an attempt by women to hide their own faults.....", "'I have done nothing wrong! The Nakuru Magistrate Court has wrongly accused me of fraud. The parents are liers, they are not credible. Do not trust them!' - Uasin Gishu Senator Mandago", "The WHO and MoH recently reported that 9 Kenyan women die of cervical cancer per day.",
+"A recent study by the World Health Organisation (WHO) found that HPV can impact both males and females.", "Citizen TV EXPOSES SCAM: NTV is refusing to report that the Government is knowingly spreading diseases through the airwaves and food supply!", "The Ministry of Health has endorsed the HPV vaccine due to its potential to significantly reduce the burden of cervical cancer in Kenya.", "Speaking to reporters outside UN headquarters, UN Secretary General Guterres stressed the need to phase out fossil fuels and boost investment in renewable energy in order to tackle climate change.", "Inter Miami, a US-based football club, sign Argentinian football player Lionel Messi.", "A post from Erik_Omondee98: Government officials have illegally manipulated the weather to cause destructive storms.", "The BBC reports that Eliud Kipchoge, an elite Kenyan marathon runner, broke his own world record during the Berlin marathon in 2022.", "Kenya's Interior Ministry has suspended the operations of cryptocurrency project Worldcoin, citing data privacy concerns.")
+
+# Which techniques are used in each post
+manipulation_technique_actual <- list("1" = c("Spreading Conspiracy theories", "Emotional language use"), 
+                                      "2" = c("Spreading Conspiracy theories", "Emotional language use"),  
+                                      "3" = c("Spreading Conspiracy theories", "Emotional language use"), 
+                                      "4" = c("Increasing intergroup Polarization" , "Emotional language use", "Spreading Conspiracy theories"), 
+                                      "5" = c("Impersonating people through fake accounts", "Emotional Language use", "Spreading Conspiracy theories"), 
+                                      "6" = c("Evoking outrage through Trolling"), 
+                                      "7" = c("Discrediting opponents"), 
+                                      "8" = NA, 
+                                      "9" = NA, 
+                                      "10" = c("Discrediting opponents", "Emotional language use", "Spreading Conspiracy theories"), 
+                                      "11" = NA, 
+                                      "12" = NA, 
+                                      "13" = NA, 
+                                      "14" = c("Spreading Conspiracy theories" , "Impersonating people through fake accounts"), 
+                                      "15" = NA, 
+                                      "16" = NA)
+
+
+# Is the post manipulative or not
+manipulativeness_actual <- as.factor(c("1" = "Yes", "2" = "Yes",  "3" = "Yes", "4" = "Yes", "5" = "Yes", "6" = "Yes", "7" = "Yes", "8" = "No", "9" = "No", "10" = "Yes", "11" = "No", "12" = "No", "13" = "No", "14" = "Yes", "15" = "No", "16" = "No"))
+
+
+# Make the list of the manipulation techniques more intuitive
+names(manipulation_technique_actual) <- posts_base_order
+
+```
+
+
+## Cleaning
+
+```{r}
+
+# Create temp df
+temp_df <- combined %>% 
+  select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, starts_with("survey.1.player.detect_misinfo_quiz"))
+
+temp_df[temp_df == ""] <- NA 
+temp_df <- temp_df %>% 
+  filter(!is.na(introduction.1.player.assigned_group))
+
+# Bring order to chaos
+# 4+1+4+1+3+1+2 is the sequency (the 1s are the fulls)
+
+# Correctly order the fulls
+fulls_order_clean <- str_remove_all(temp_df$introduction.1.player.full_posts_order, '\\]|\\[')
+start_idx_full_posts <- c((5-1)*9+1+3, (10-1)*9+1+3, (14-1)*9+1+3) # (Number of Question - 1 to get the previous one)*9 questions for each post + 1 damit man den ersten kriegt + 3 weil group, order of posts
+full_all_idx <- mapply(function(i, x) seq(from = i, to = x), start_idx_full_posts, (start_idx_full_posts+8))
+
+for(i in 1:nrow(temp_df)){
+  
+  # Reorder the columns into a vector
+  correct_order <- as.numeric(unlist(str_split(fulls_order_clean[i], ", ")))
+  
+  # Reorder the columns
+  correct_column_indices <- as.vector(full_all_idx[,correct_order])
+  
+  # Implement the correct order to the data.frame
+  temp_df[i,as.vector(full_all_idx)] <- unlist(temp_df[i,])[correct_column_indices]
+  
+}
+
+# Correctly order the halfs
+halfs_order_clean <- str_remove_all(temp_df$introduction.1.player.bottom_posts_order, '\\]|\\[')
+start_idx_half_posts <- sapply(c(1:4, 6:9, 11:13, 15:16), function(i) (i-1)*9+1+3)
+half_all_idx <- mapply(function(i, x) seq(from = i, to = x), start_idx_half_posts, (start_idx_half_posts+8))
+
+for(i in 1:nrow(temp_df)){
+  
+  # Reorder the columns into a vector
+  correct_order <- as.numeric(unlist(str_split(halfs_order_clean[i], ", ")))
+  
+  # Reorder the columns
+  correct_column_indices <- as.vector(half_all_idx[,correct_order])
+  
+  # Implement the correct order to the data.frame
+  temp_df[i,as.vector(half_all_idx)] <- unlist(temp_df[i,])[correct_column_indices]
+  
+}
+
+# Remove order columns
+temp_df <- temp_df[,-c(2:3)]
+
+```
+
+## Helper Functions
+
+```{r}
+
+# Function to clean the list of vectors with manipulation techniques
+process_vectors <- function(input_list) {
+  processed_list <- lapply(input_list, function(vec) {
+    # Check if "" is the only element in the vector
+    if (length(vec) == 1 && vec[1] == "") {
+      vec[1] <- ""  # Transform "" into NA
+    } else {
+      vec <- vec[vec != ""]  # Remove "" from vectors with other elements
+    }
+    return(vec)
+  })
+  return(processed_list)
+}
+
+
+############# ----------------------------------------------------------------------------------------------------------------------
+
+
+# Function to compute confusion matrix for one participant across all posts for a specific technique
+compute_confusion_matrix_by_technique <- function(participant_row, technique) {
+  
+  # Clean participant row
+  participant_row_split <- str_split(str_remove_all(participant_row, "\\'|\\]|\\[|[:digit:]"), ",  ")
+  participant_row_clean <- process_vectors(participant_row_split)
+  
+  # Confusion matrix for technique X (TRUE == I think the technique was used)
+  predicted <- sapply(participant_row_clean, function(x) technique %in% x)
+  actual <- sapply(manipulation_technique_actual, function(x) technique %in% x)
+  confusion_matrix <- table(actual, predicted)
+
+  # Compute TP, FP, TN, FN
+  TP <- ifelse(TRUE %in% actual && TRUE %in% predicted, confusion_matrix["TRUE", "TRUE"], 0)
+  FP <- ifelse(FALSE %in% actual && TRUE %in% predicted, confusion_matrix["FALSE", "TRUE"], 0)
+  TN <- ifelse(FALSE %in% actual && FALSE %in% predicted, confusion_matrix["FALSE", "FALSE"], 0)
+  FN <- ifelse(TRUE %in% actual && FALSE %in% predicted, confusion_matrix["TRUE", "FALSE"], 0)
+  
+  # Calculate rates
+  TPR <- TP / (TP + FN)
+  FPR <- FP / (FP + TN)
+  TNR <- TN / (FP + TN)
+  FNR <- FN / (TP + FN)
+  
+  return(data.frame(TPR, FPR, TNR, FNR))
+}
+
+
+
+# This function vectorises the confusion matrix creation functions and applies it to all participants
+confusion_matrix_for_all_participants <- function(manipulation_technique){
+  
+  # Make a list of confusion matrixes
+  confusion_matrices <- lapply(1:nrow(temp_df), function(i) compute_confusion_matrix_by_technique(temp_df[i,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_2")], manipulation_technique))
+  
+  # Bind into DF
+  confusion_matrix_df <- do.call(rbind, confusion_matrices)
+  
+  return(confusion_matrix_df)
+}
+
+
+############# ----------------------------------------------------------------------------------------------------------------------
+
+
+# Function to compute confusion matrix for one participant across all posts for a specific technique
+compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts <- function(participant_row, participant_yes_no, technique) {
+  
+  # Convert row that outlines the participants yes or no for the "Is this manipulative?" question?
+  participant_yes_no <- ifelse(participant_yes_no == "Yes", TRUE, FALSE)
+
+  # Did they correctly identify a post as manipulative or not
+  manipulativeness_actual_bool <- ifelse(manipulativeness_actual == "Yes", TRUE,FALSE)
+  correctness_of_identification <- ifelse(manipulativeness_actual_bool + participant_yes_no == 2, TRUE, FALSE) # TRUE == Correctly Identified
+  
+  # Clean participant row
+  participant_row_split <- str_split(str_remove_all(participant_row, "\\'|\\]|\\[|[:digit:]"), ",  ")
+  participant_row_clean <- process_vectors(participant_row_split)
+  
+  # Confusion matrix for technique X (TRUE == I think the technique was used)
+  predicted <- sapply(participant_row_clean[correctness_of_identification & manipulativeness_actual_bool], function(x) technique %in% x)
+  actual <- sapply(manipulation_technique_actual[correctness_of_identification & manipulativeness_actual_bool], function(x) technique %in% x)
+  confusion_matrix <- table(actual, predicted)
+
+  # Compute TP, FP, TN, FN
+  TP <- ifelse(TRUE %in% actual && TRUE %in% predicted, confusion_matrix["TRUE", "TRUE"], 0)
+  FP <- ifelse(FALSE %in% actual && TRUE %in% predicted, confusion_matrix["FALSE", "TRUE"], 0)
+  TN <- ifelse(FALSE %in% actual && FALSE %in% predicted, confusion_matrix["FALSE", "FALSE"], 0)
+  FN <- ifelse(TRUE %in% actual && FALSE %in% predicted, confusion_matrix["TRUE", "FALSE"], 0)
+  
+  # Calculate rates
+  TPR <- TP / (TP + FN)
+  FPR <- FP / (FP + TN)
+  TNR <- TN / (FP + TN)
+  FNR <- FN / (TP + FN)
+  
+  return(data.frame(TPR, FPR, TNR, FNR))
+}
+
+
+
+# This function vectorises the confusion matrix creation functions and applies it to all participants
+compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts_for_all_participants <- function(manipulation_technique){
+  
+  # Make a list of confusion matrixes
+  confusion_matrices <- lapply(1:nrow(temp_df), function(i) compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts(temp_df[i,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_2")], temp_df[i,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_1")], manipulation_technique))
+  
+  # Bind into DF
+  confusion_matrix_df <- do.call(rbind, confusion_matrices)
+  
+  return(confusion_matrix_df)
+}
+
+
+
+# Run ANOVA for each rate
+anova_TPR_TNR_FPR_FNR_manipulation <- function(confusion_matrix_df){
+  
+  # 1. True Positive Rate
+  anova_temp <- TukeyHSD(aov(confusion_matrix_df$TPR ~ temp_df$introduction.1.player.assigned_group))
+  print("TRUE POSITIVE RATE")
+  print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  
+  # 2. True Negative Rate
+  anova_temp <- TukeyHSD(aov(confusion_matrix_df$TNR ~ temp_df$introduction.1.player.assigned_group))
+  print("TRUE NEGATIVE RATE")
+  print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  
+  # 3. False Negative Rate
+  anova_temp <- TukeyHSD(aov(confusion_matrix_df$FNR ~ temp_df$introduction.1.player.assigned_group))
+  print("FALSE NEGATIVE RATE")
+  print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  
+  # 4. False Positive Rate
+  anova_temp <- TukeyHSD(aov(confusion_matrix_df$FPR ~ temp_df$introduction.1.player.assigned_group))
+  print("FALSE POSITIVE RATE")
+  print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+
+}
+
+
+############# ----------------------------------------------------------------------------------------------------------------------
+
+
+participant_row <- temp_df[1,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_2")]
+post_number <- 1
+technique <- "Impersonating people through fake accounts"
+
+
+# Function to compute confusion matrix for each participant for specific posts
+compute_confusion_matrix_by_technique_per_participant_specific_posts <- function(participant_row, post_number, technique) {
+  
+  # Clean participant row
+  participant_row_split <- str_split(str_remove_all(participant_row[,post_number], "\\'|\\]|\\[|[:digit:]"), ",  ")
+  participant_row_clean <- process_vectors(participant_row_split)
+  
+  # Confusion matrix for technique X (TRUE == I think the technique was used)
+  predicted <- sapply(participant_row_clean, function(x) technique %in% x)
+  actual <- technique %in% manipulation_technique_actual[[post_number]]
+  confusion_matrix <- table(actual, predicted)
+
+  # Compute TP, FP, TN, FN
+  TP <- ifelse(TRUE %in% actual && TRUE %in% predicted, confusion_matrix["TRUE", "TRUE"], 0)
+  FP <- ifelse(FALSE %in% actual && TRUE %in% predicted, confusion_matrix["FALSE", "TRUE"], 0)
+  TN <- ifelse(FALSE %in% actual && FALSE %in% predicted, confusion_matrix["FALSE", "FALSE"], 0)
+  FN <- ifelse(TRUE %in% actual && FALSE %in% predicted, confusion_matrix["TRUE", "FALSE"], 0)
+  
+  # Calculate rates
+  TPR <- TP / (TP + FN)
+  FPR <- FP / (FP + TN)
+  TNR <- TN / (FP + TN)
+  FNR <- FN / (TP + FN)
+  
+  return(data.frame(TPR, FPR, TNR, FNR))
+}
+
+
+# This function vectorises the confusion matrix creation functions and applies it to all participants for the specific posts
+confusion_matrix_for_all_participants_specific_posts <- function(manipulation_technique, post_number){
+  
+  # Make a list of confusion matrixes
+  confusion_matrices <- lapply(1:nrow(temp_df), function(i) compute_confusion_matrix_by_technique_per_participant_specific_posts(temp_df[i,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_2")], post_number, manipulation_technique))
+  
+  # Bind into DF
+  confusion_matrix_df <- do.call(rbind, confusion_matrices)
+  
+  return(confusion_matrix_df)
+}
+
+# Run ANOVA for each rate
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique <- function(confusion_matrix_df){
+  
+  # 1. True Positive Rate
+  if(!is.nan(sum(confusion_matrix_df$TPR))){
+    anova_temp <- TukeyHSD(aov(confusion_matrix_df$TPR ~ temp_df$introduction.1.player.assigned_group))
+    print("TRUE POSITIVE RATE")
+    print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  }
+  
+  
+  # # 2. True Negative Rate
+  # if(!is.nan(sum(confusion_matrix_df$TNR))){
+  #   anova_temp <- TukeyHSD(aov(confusion_matrix_df$TNR ~ temp_df$introduction.1.player.assigned_group))
+  #   print("TRUE NEGATIVE RATE")
+  #   print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  # }
+  # 
+  # # 3. False Negative Rate
+  # if(!is.nan(sum(confusion_matrix_df$FNR))){
+  #   anova_temp <- TukeyHSD(aov(confusion_matrix_df$FNR ~ temp_df$introduction.1.player.assigned_group))
+  #   print("FALSE NEGATIVE RATE")
+  #   print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  # }
+
+  # 4. False Positive Rate
+  if(!is.nan(sum(confusion_matrix_df$FPR))){
+    anova_temp <- TukeyHSD(aov(confusion_matrix_df$FPR ~ temp_df$introduction.1.player.assigned_group))
+    print("FALSE POSITIVE RATE")
+    print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  }
+
+}
+
+
+
+```
+
+
+## Analysis
+
+```{r}
+
+######################## Data IS CLEAN NOW!!
+
+
+# Primary Analysis ----------------------------------------------------------------------------------------
+
+
+# Level of Analysis
+# By manipulation technique for those who thought it was manipulative
+
+# Method
+# 1. Computing Confusion Matrix (-> focus on Hit Rate (True Negative), False Alarm Rate (False Negative)) for each participant
+# 2. Outcome variables are all elements of the confusion matrix.
+# 3. Pairwise t.test between C<>Online, C<>Online_Offline, C<>Offline, Online<>Offline, Online<>Online_Offline, # Offline<>Online_Offline (all)
+# 4. Also test the difference in discernment (true positive - false positive) between all.
+
+# Hypotheses
+# 1. True Positive Rate ⬆️ for Online, Offline & Online_Offline for each technique
+# 2. True Negative Rate ⬆️ for Online, Offline & Online_Offline for each technique
+# 3. False Negative Rate ⬇️ for Online, Offline & Online_Offline for each technique
+# 4. False Positive Rate ⬇️ for Online, Offline & Online_Offline for each technique
+
+# ----------------------------------------------------------------------------------------
+
+############ TECHNIQUE 1 - Discrediting opponents ----------------------------------------------------
+
+confusion_matrix_df <- confusion_matrix_for_all_participants("Discrediting opponents")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+# Show the differences in a data.frame
+cbind(group = temp_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+  group_by(group) %>% 
+  summarise_all(list(mean))
+
+############ TECHNIQUE 2 - Emotional language use ----------------------------------------------------
+confusion_matrix_df <- confusion_matrix_for_all_participants("Emotional language use")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+# Show the differences in a data.frame
+cbind(group = temp_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+  group_by(group) %>% 
+  summarise_all(list(mean))
+
+############ TECHNIQUE 3 - Increasing intergroup Polarization ----------------------------------------------------
+confusion_matrix_df <- confusion_matrix_for_all_participants("Increasing intergroup Polarization")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+# Show the differences in a data.frame
+cbind(group = temp_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+  group_by(group) %>% 
+  summarise_all(list(mean))
+
+############ TECHNIQUE 4 - Impersonating people through fake accounts ----------------------------------------------------
+confusion_matrix_df <- confusion_matrix_for_all_participants("Impersonating people through fake accounts")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+# Show the differences in a data.frame
+cbind(group = temp_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+  group_by(group) %>% 
+  summarise_all(list(mean))
+
+############ TECHNIQUE 5 - Spreading Conspiracy theories ----------------------------------------------------
+confusion_matrix_df <- confusion_matrix_for_all_participants("Spreading Conspiracy theories")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+# Show the differences in a data.frame
+cbind(group = temp_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+  group_by(group) %>% 
+  summarise_all(list(mean))
+
+############ TECHNIQUE 6 - Evoking outrage through Trolling ----------------------------------------------------
+confusion_matrix_df <- confusion_matrix_for_all_participants("Evoking outrage through Trolling")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+# Show the differences in a data.frame
+cbind(group = temp_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+  group_by(group) %>% 
+  summarise_all(list(mean))
+
+
+# Secondary Analysis ----------------------------------------------------------------------------------------------
+
+# 1. Repeat the analysis but only for consider the posts where the participant correctly identified the post as manipulative. -------------
+
+############ TECHNIQUE 1 - Discrediting opponents ----------------------------------------------------
+confusion_matrix_df <- compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts_for_all_participants("Discrediting opponents")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+############ TECHNIQUE 2 - Emotional language use ----------------------------------------------------
+confusion_matrix_df <- compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts_for_all_participants("Emotional language use")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+############ TECHNIQUE 3 - Increasing intergroup Polarization ----------------------------------------------------
+confusion_matrix_df <- compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts_for_all_participants("Increasing intergroup Polarization")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+############ TECHNIQUE 4 - Impersonating people through fake accounts ----------------------------------------------------
+confusion_matrix_df <- compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts_for_all_participants("Impersonating people through fake accounts")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+############ TECHNIQUE 5 - Spreading Conspiracy theories ----------------------------------------------------
+confusion_matrix_df <- compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts_for_all_participants("Spreading Conspiracy theories")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+############ TECHNIQUE 6 - Evoking outrage through Trolling ----------------------------------------------------
+confusion_matrix_df <- compute_confusion_matrix_by_technique_only_correctly_identified_manipulative_posts_for_all_participants("Evoking outrage through Trolling")
+anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
+
+
+# 2. Repeat the primary analysis by manipulation technique by post --> this will inform if some techniques for some posts were particularly well or poorly spotted (this might warrant excluding those techniques for those posts from the analysis judging them as too tricky to spot) -----------------------------------------------------------------------
+
+# POST 1 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[1]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 1)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 1)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 1)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 1)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 1)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 1)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 2 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[2]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 2)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 2)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 2)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 2)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 2)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 2)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 3 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[3]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 3)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 3)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 3)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 3)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 3)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 3)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+
+# POST 4 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[4]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 4)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 4)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 4)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 4)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 4)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 4)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 5 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[5]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 5)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 5)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 5)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 5)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 5)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 5)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 6 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[6]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 6)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 6)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 6)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 6)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 6)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 6)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 7 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[7]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 7)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 7)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 7)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 7)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 7)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 7)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 8 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[8]
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 8)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 8)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 8)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 8)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 8)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 8)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 9 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[9]
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 9)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 9)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 9)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 9)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 9)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 9)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 10 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[10]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 10)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 10)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 10)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 10)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 10)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 10)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 11 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[11]
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 11)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 11)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 11)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 11)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 11)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 11)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 12 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[12]
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 12)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 12)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 12)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 12)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 12)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 12)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 13 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[13]
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 13)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 13)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 13)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 13)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 13)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 13)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 14 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[14]
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 14)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 14)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 14)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 14)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 14)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 14)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 15 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[15]
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 15)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 15)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 15)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 15)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 15)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 15)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+# POST 16 ----------------------------------------------------------------------------------------------------------
+manipulation_technique_actual[16]
+
+# Remaining techniques not used in this post
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Discrediting opponents", 16)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Increasing intergroup Polarization", 16)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Impersonating people through fake accounts", 16)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Spreading Conspiracy theories", 16)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Emotional language use", 16)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_specific_posts("Evoking outrage through Trolling", 16)
+anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_df)
+
+
+#################### ----------------------------------------------------------------------------------------------------
+#################### ----------------------------------------------------------------------------------------------------
+
+# 3. Repeat the primary analysis by manipulation technique by group of posts (HPV vs Non-HPV) --> this will inform if the overarching finding was driven by the groups of posts
+
+# 4. Repeat all analyses by Gender & Religion
+
+# Exploratory Analysis
+
+# 1. Analyse manipulation techniques that occur together. Answer questions like --> Is some technique more/less often spotted when another is also present? Is some technique more/less often spotted when another is identified which is actually there or not actually there? Is some technique imagined more/less often when another is identified?
+
+```
+
