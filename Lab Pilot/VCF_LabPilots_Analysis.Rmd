@@ -651,11 +651,6 @@ anova_TPR_TNR_FPR_FNR_manipulation <- function(confusion_matrix_df){
 ############# ----------------------------------------------------------------------------------------------------------------------
 
 
-participant_row <- temp_df[1,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_2")]
-post_number <- 1
-technique <- "Impersonating people through fake accounts"
-
-
 # Function to compute confusion matrix for each participant for specific posts
 compute_confusion_matrix_by_technique_per_participant_specific_posts <- function(participant_row, post_number, technique) {
   
@@ -731,6 +726,81 @@ anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique <- function(confu
 }
 
 
+############# ----------------------------------------------------------------------------------------------------------------------
+
+# Function to compute confusion matrix for each participant for specific posts
+compute_confusion_matrix_by_technique_per_participant_group_of_posts <- function(participant_row, post_number, technique) {
+  
+  # Clean participant row
+  participant_row_split <- str_split(str_remove_all(participant_row[,post_number], "\\'|\\]|\\[|[:digit:]"), ",  ")
+  participant_row_clean <- process_vectors(participant_row_split)
+  
+  # Confusion matrix for technique X (TRUE == I think the technique was used)
+  predicted <- sapply(participant_row_clean, function(x) technique %in% x)
+  actual <- sapply(post_number, function(i) technique %in% manipulation_technique_actual[[i]])
+  confusion_matrix <- table(actual, predicted)
+
+  # Compute TP, FP, TN, FN
+  TP <- ifelse(TRUE %in% actual && TRUE %in% predicted, confusion_matrix["TRUE", "TRUE"], 0)
+  FP <- ifelse(FALSE %in% actual && TRUE %in% predicted, confusion_matrix["FALSE", "TRUE"], 0)
+  TN <- ifelse(FALSE %in% actual && FALSE %in% predicted, confusion_matrix["FALSE", "FALSE"], 0)
+  FN <- ifelse(TRUE %in% actual && FALSE %in% predicted, confusion_matrix["TRUE", "FALSE"], 0)
+  
+  # Calculate rates
+  TPR <- TP / (TP + FN)
+  FPR <- FP / (FP + TN)
+  TNR <- TN / (FP + TN)
+  FNR <- FN / (TP + FN)
+  
+  return(data.frame(TPR, FPR, TNR, FNR))
+}
+
+
+# This function vectorises the confusion matrix creation functions and applies it to all participants for the specific posts
+confusion_matrix_for_all_participants_group_of_posts <- function(manipulation_technique, post_number){
+  
+  # Make a list of confusion matrixes
+  confusion_matrices <- lapply(1:nrow(temp_df), function(i) compute_confusion_matrix_by_technique_per_participant_group_of_posts(temp_df[i,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_2")], post_number, manipulation_technique))
+  
+  # Bind into DF
+  confusion_matrix_df <- do.call(rbind, confusion_matrices)
+  
+  return(confusion_matrix_df)
+}
+
+# Run ANOVA for each rate
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique <- function(confusion_matrix_df){
+  
+  # 1. True Positive Rate
+  if(!is.nan(sum(confusion_matrix_df$TPR))){
+    anova_temp <- TukeyHSD(aov(confusion_matrix_df$TPR ~ temp_df$introduction.1.player.assigned_group))
+    print("TRUE POSITIVE RATE")
+    print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  }
+  
+  
+  # 2. True Negative Rate
+  if(!is.nan(sum(confusion_matrix_df$TNR))){
+    anova_temp <- TukeyHSD(aov(confusion_matrix_df$TNR ~ temp_df$introduction.1.player.assigned_group))
+    print("TRUE NEGATIVE RATE")
+    print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  }
+  
+  # 3. False Negative Rate
+  if(!is.nan(sum(confusion_matrix_df$FNR))){
+    anova_temp <- TukeyHSD(aov(confusion_matrix_df$FNR ~ temp_df$introduction.1.player.assigned_group))
+    print("FALSE NEGATIVE RATE")
+    print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  }
+
+  # 4. False Positive Rate
+  if(!is.nan(sum(confusion_matrix_df$FPR))){
+    anova_temp <- TukeyHSD(aov(confusion_matrix_df$FPR ~ temp_df$introduction.1.player.assigned_group))
+    print("FALSE POSITIVE RATE")
+    print(anova_temp$`temp_df$introduction.1.player.assigned_group`)
+  }
+
+}
 
 ```
 
@@ -768,7 +838,7 @@ confusion_matrix_df <- confusion_matrix_for_all_participants("Discrediting oppon
 anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
 
 # Show the differences in a data.frame
-cbind(group = temp_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+cbind(group = tempf_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
   group_by(group) %>% 
   summarise_all(list(mean))
 
@@ -1147,11 +1217,315 @@ anova_TPR_TNR_FPR_FNR_manipulation_specific_posts_by_technique(confusion_matrix_
 
 # 3. Repeat the primary analysis by manipulation technique by group of posts (HPV vs Non-HPV) --> this will inform if the overarching finding was driven by the groups of posts
 
-# 4. Repeat all analyses by Gender & Religion
+# HPV-Posts
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Discrediting opponents", c(1:3,5,8:9,11))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Increasing intergroup Polarization", c(1:3,5,8:9,11))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Impersonating people through fake accounts", c(1:3,5,8:9,11))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Spreading Conspiracy theories", c(1:3,5,8:9,11))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Emotional language use", c(1:3,5,8:9,11))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Evoking outrage through Trolling", c(1:3,5,8:9,11))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+
+# Non-HPV-Posts
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Discrediting opponents", c(4,6:7,10,12:16))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Increasing intergroup Polarization", c(4,6:7,10,12:16))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Impersonating people through fake accounts", c(4,6:7,10,12:16))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Spreading Conspiracy theories", c(4,6:7,10,12:16))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Emotional language use", c(4,6:7,10,12:16))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+confusion_matrix_df <- confusion_matrix_for_all_participants_group_of_posts("Evoking outrage through Trolling", c(4,6:7,10,12:16))
+anova_TPR_TNR_FPR_FNR_manipulation_group_of_posts_by_technique(confusion_matrix_df)
+
+# 4. Repeat all analyses by Gender & Religion - SEEMS A LITLE OVER THE TOP
 
 # Exploratory Analysis
 
 # 1. Analyse manipulation techniques that occur together. Answer questions like --> Is some technique more/less often spotted when another is also present? Is some technique more/less often spotted when another is identified which is actually there or not actually there? Is some technique imagined more/less often when another is identified?
 
+test <- temp_df[,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_2")]
+
+# Network?
+
 ```
+
+# Confidence in Manipulation Technique Identification
+
+```{r}
+# Which techniques are used in each post
+manipulation_technique_actual <- list("1" = c("Spreading Conspiracy theories", "Emotional language use"), 
+                                      "2" = c("Spreading Conspiracy theories", "Emotional language use"),  
+                                      "3" = c("Spreading Conspiracy theories", "Emotional language use"), 
+                                      "4" = c("Increasing intergroup Polarization" , "Emotional language use", "Spreading Conspiracy theories"), 
+                                      "5" = c("Impersonating people through fake accounts", "Emotional Language use", "Spreading Conspiracy theories"), 
+                                      "6" = c("Evoking outrage through Trolling"), 
+                                      "7" = c("Discrediting opponents"), 
+                                      "8" = NA, 
+                                      "9" = NA, 
+                                      "10" = c("Discrediting opponents", "Emotional language use", "Spreading Conspiracy theories"), 
+                                      "11" = NA, 
+                                      "12" = NA, 
+                                      "13" = NA, 
+                                      "14" = c("Spreading Conspiracy theories" , "Impersonating people through fake accounts"), 
+                                      "15" = NA, 
+                                      "16" = NA)
+
+
+discrediting_opponents_col_idx <- seq(from = 2, to = ncol(temp_df), by = 6)
+emotional_language_col_idx <- seq(from = 3, to = ncol(temp_df), by = 6)
+polarisation_col_idx <- seq(from = 4, to = ncol(temp_df), by = 6)
+impersonating_col_idx <- seq(from = 5, to = ncol(temp_df), by = 6)
+conspiracy_theory_col_idx <- seq(from = 6, to = ncol(temp_df), by = 6)
+trolling_col_idx <- seq(from = 7, to = ncol(temp_df), by = 6)
+
+correct_identification_columns <- c(discrediting_opponents_col_idx[c(7, 10)], 
+  emotional_language_col_idx[c(1:5,10)],
+  polarisation_col_idx[4],
+  impersonating_col_idx[c(5 , 14)],
+  conspiracy_theory_col_idx[c(1:5, 10, 14)],
+  trolling_col_idx[6])
+
+```
+
+## Cleaning
+
+```{r}
+# Create temp df
+temp_df <- combined %>% 
+  select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, contains(paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_3")))
+
+temp_df[temp_df == ""] <- NA 
+temp_df <- temp_df %>% 
+  filter(!is.na(introduction.1.player.assigned_group))
+
+# Bring order to chaos
+# 4+1+4+1+3+1+2 is the sequence (the 1s are the fulls)
+
+# Correctly order the fulls
+fulls_order_clean <- str_remove_all(temp_df$introduction.1.player.full_posts_order, '\\]|\\[')
+start_idx_full_posts <- c((5-1)*6+1+3, (10-1)*6+1+3, (14-1)*6+1+3) # (Number of Question - 1 to get the previous one)*6 questions for each post + 1 damit man den ersten kriegt + 3 weil group, order of posts
+full_all_idx <- mapply(function(i, x) seq(from = i, to = x), start_idx_full_posts, (start_idx_full_posts+5))
+
+for(i in 1:nrow(temp_df)){
+  
+  # Reorder the columns into a vector
+  correct_order <- as.numeric(unlist(str_split(fulls_order_clean[i], ", ")))
+  
+  # Reorder the columns
+  correct_column_indices <- as.vector(full_all_idx[,correct_order])
+  
+  # Implement the correct order to the data.frame
+  temp_df[i,as.vector(full_all_idx)] <- unlist(temp_df[i,])[correct_column_indices]
+  
+}
+
+# Correctly order the halfs
+halfs_order_clean <- str_remove_all(temp_df$introduction.1.player.bottom_posts_order, '\\]|\\[')
+start_idx_half_posts <- sapply(c(1:4, 6:9, 11:13, 15:16), function(i) (i-1)*6+1+3)
+half_all_idx <- mapply(function(i, x) seq(from = i, to = x), start_idx_half_posts, (start_idx_half_posts+5))
+
+for(i in 1:nrow(temp_df)){
+  
+  # Reorder the columns into a vector
+  correct_order <- as.numeric(unlist(str_split(halfs_order_clean[i], ", ")))
+  
+  # Reorder the columns
+  correct_column_indices <- as.vector(half_all_idx[,correct_order])
+  
+  # Implement the correct order to the data.frame
+  temp_df[i,as.vector(half_all_idx)] <- unlist(temp_df[i,])[correct_column_indices]
+  
+}
+
+# Remove order columns
+temp_df <- temp_df[,-c(2:3)]
+
+
+# Transform confidence rating columns into numeric
+temp_df[,-1] <- temp_df[,-1] %>% mutate_all(as.numeric)
+
+```
+
+## Analysis
+
+```{r}
+
+# Method
+# 1. Transform Likert scale to a numeric variable
+# 2. Compare mean score (pairwise t.test all treatment groups)
+# 3. Compare mean score by technique only (pairwise t.test all treatment groups)
+# 4. Compare mean score by correctness of identification (pairwise t.test all treatment groups)
+# 5. Compare mean score by technique AND correctness of identification (pairwise t.test all treatment groups)
+# 6. Compare mean score correctness of identification AND correctness of post manipulativeness (pairwise t.test all treatment groups) → compare mean confidence score for correctly identified techniques in correctly identified manipulative posts vs. a) mean confidence score of incorrectly identified techniques in correctly identified manipulative posts b) mean confidence score of incorrectly identified techniques in incorrectly identified manipulative posts
+
+
+########################## Hypotheses ---------------------------------------------
+
+# 1. Average Confidence ⬆️ for Online, Offline & Online_Offline overall and for all techniques
+TukeyHSD(aov(rowMeans(temp_df[,-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+
+
+####### By Correctness of Identification
+# 2. Avg. confidence for false identifications ⬆️ for Online, Offline & Online_Offline overall and for all techniques (shouldn’t be)
+TukeyHSD(aov(rowMeans(temp_df[,-c(1,correct_identification_columns)], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+
+# 3. Avg. confidence for true identifications ⬆️ for Online, Offline & Online_Offline overall and for all techniques
+TukeyHSD(aov(rowMeans(temp_df[,correct_identification_columns], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+
+
+####### By Technique
+TukeyHSD(aov(rowMeans(temp_df[,-1][,discrediting_opponents_col_idx-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,emotional_language_col_idx-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,polarisation_col_idx-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,impersonating_col_idx-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,conspiracy_theory_col_idx-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,trolling_col_idx-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+
+# By Technique by Correctness
+
+# CORRECT IDENTIFICATIONS ONLY BY TECHNIQUE
+TukeyHSD(aov(rowMeans(temp_df[,-1][,discrediting_opponents_col_idx[c(7, 10)]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,emotional_language_col_idx[c(1:5,10)]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(temp_df[,-1][,polarisation_col_idx[4]-1] ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,impersonating_col_idx[c(5, 14)]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,conspiracy_theory_col_idx[c(1:5, 10, 14)]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(temp_df[,-1][,trolling_col_idx[6]-1] ~ temp_df$introduction.1.player.assigned_group))
+
+# FALSE IDENTIFICATIONS ONLY BY TECHNIQUE
+TukeyHSD(aov(rowMeans(temp_df[,-1][,discrediting_opponents_col_idx[-c(7, 10)]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,emotional_language_col_idx[-c(1:5,10)]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,polarisation_col_idx[-4]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,impersonating_col_idx[-c(5, 14)]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,conspiracy_theory_col_idx[-c(1:5, 10, 14)]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(temp_df[,-1][,trolling_col_idx[-6]-1], na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+
+```
+
+# Propensity to Share Posts
+
+```{r}
+# Is the post manipulative or not?
+manipulativeness_actual <- as.factor(c("1" = "Yes", "2" = "Yes",  "3" = "Yes", "4" = "Yes", "5" = "Yes", "6" = "Yes", "7" = "Yes", "8" = "No", "9" = "No", "10" = "Yes", "11" = "No", "12" = "No", "13" = "No", "14" = "Yes", "15" = "No", "16" = "No"))
+
+manipulativeness_actual_bool <- ifelse(manipulativeness_actual == "Yes", TRUE, FALSE)
+
+```
+
+
+## Cleaning
+
+```{r}
+
+# Create temp df
+temp_df <- combined %>% 
+  select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, starts_with("survey.1.player.detect_misinfo_quiz"))
+
+temp_df[temp_df == ""] <- NA 
+temp_df <- temp_df %>% 
+  filter(!is.na(introduction.1.player.assigned_group))
+
+# Bring order to chaos
+# 4+1+4+1+3+1+2 is the sequency (the 1s are the fulls)
+
+# Correctly order the fulls
+fulls_order_clean <- str_remove_all(temp_df$introduction.1.player.full_posts_order, '\\]|\\[')
+start_idx_full_posts <- c((5-1)*9+1+3, (10-1)*9+1+3, (14-1)*9+1+3) # (Number of Question - 1 to get the previous one)*9 questions for each post + 1 damit man den ersten kriegt + 3 weil group, order of posts
+full_all_idx <- mapply(function(i, x) seq(from = i, to = x), start_idx_full_posts, (start_idx_full_posts+8))
+
+for(i in 1:nrow(temp_df)){
+  
+  # Reorder the columns into a vector
+  correct_order <- as.numeric(unlist(str_split(fulls_order_clean[i], ", ")))
+  
+  # Reorder the columns
+  correct_column_indices <- as.vector(full_all_idx[,correct_order])
+  
+  # Implement the correct order to the data.frame
+  temp_df[i,as.vector(full_all_idx)] <- unlist(temp_df[i,])[correct_column_indices]
+  
+}
+
+# Correctly order the halfs
+halfs_order_clean <- str_remove_all(temp_df$introduction.1.player.bottom_posts_order, '\\]|\\[')
+start_idx_half_posts <- sapply(c(1:4, 6:9, 11:13, 15:16), function(i) (i-1)*9+1+3)
+half_all_idx <- mapply(function(i, x) seq(from = i, to = x), start_idx_half_posts, (start_idx_half_posts+8))
+
+for(i in 1:nrow(temp_df)){
+  
+  # Reorder the columns into a vector
+  correct_order <- as.numeric(unlist(str_split(halfs_order_clean[i], ", ")))
+  
+  # Reorder the columns
+  correct_column_indices <- as.vector(half_all_idx[,correct_order])
+  
+  # Implement the correct order to the data.frame
+  temp_df[i,as.vector(half_all_idx)] <- unlist(temp_df[i,])[correct_column_indices]
+  
+}
+
+# Remove order columns
+temp_df <- temp_df[,-c(2:3)]
+
+
+# Perceived Manipulativeness
+temp_df[,paste0("survey.1.player.detect_misinfo_quiz",1:16,"_1")]
+
+```
+
+## Helper Functions
+
+## Analysis
+
+```{r}
+# Primary Analysis
+
+# Level of Analysis
+# all posts in aggregate
+
+# Method
+# 1. Transform Likert scale to a numeric variable
+# 2. Compare mean score (pairwise t.test all treatment groups)
+# 3. Compare mean score by actual manipulativeness (pairwise t.test all treatment groups)
+# 4. Compare mean score by perceived manipulativeness (pairwise t.test all treatment groups)
+# 5. Compare mean score by majority vote correct identification (50%+) (pairwise t.test all treatment groups)
+# 6. Compare mean score by the actual presence of technique (pairwise t.test all treatment groups)
+# 7. Compare mean score by the perceived presence of technique (pairwise t.test all treatment groups)
+
+########## Hypotheses --------------------------------------------------------------------
+# 1. Avg. sharing intentions ➡️ for Online, Offline & Online_Offline
+TukeyHSD(aov(rowMeans(temp_df[,-1]) ~ temp_df$introduction.1.player.assigned_group))
+
+# 2. Avg. sharing intentions for actual manipulative posts ⬇️ for Online, Offline & Online_Offline
+TukeyHSD(aov(rowMeans(temp_df[,-1][,manipulativeness_actual_bool]) ~ temp_df$introduction.1.player.assigned_group))
+
+# 3. Avg. sharing intentions for actual non-manipulative posts ➡️ for Online, Offline & Online_Offline
+TukeyHSD(aov(rowMeans(temp_df[,-1][,!manipulativeness_actual_bool]) ~ temp_df$introduction.1.player.assigned_group))
+
+# 4. Avg. sharing intentions for perceived as manipulative posts ⬇️ for Online, Offline & Online_Offline
+
+
+# 5. Avg. sharing intentions for perceived as non-manipulative posts ➡️ for Online, Offline & Online_Offline
+
+
+# 6. Avg. sharing intentions for correctly perceived as manipulative posts ⬇️ for Online, Offline & Online_Offline
+# 7. Avg. sharing intentions for falsely perceived as manipulative posts ⬇️ for Online, Offline & Online_Offline
+# 8. Avg. sharing intentions for correctly perceived as non-manipulative posts ➡️ for Online, Offline & Online_Offline
+# 9. Avg. sharing intentions for falsely perceived as non-manipulative posts ➡️ for Online, Offline & Online_Offline
+
+Secondary Analysis
+
+1. Repeat the primary analysis by manipulation technique by group of posts (HPV vs Non-HPV) --> this will inform to what extent findings differ by group of posts
+2. Repeat all previous analyses by gender and religion
+3. Explore which perceived manipulations techniques most strongly interact with sharing behaviour by looking at avg. sharing intention for manipulative posts where technique X is perceived for Online, Offline & Online_Offline compared to Control
+
+```
+
 
