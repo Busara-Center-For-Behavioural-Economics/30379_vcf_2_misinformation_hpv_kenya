@@ -28,6 +28,14 @@ rm(miss_pkgs, pkgs)
 
 ```{r}
 
+## Table with relative frequencies
+tblFun <- function(x){
+  tbl <- sort(table(x), decreasing = T)
+  res <- cbind(tbl,sort(round(prop.table(tbl)*100,2), decreasing = T))
+  colnames(res) <- c('Count','Percentage')
+  res
+}
+
 tblFun_II <- function(x, y){
   tbl <- table(x, y)
   res <- apply(tbl, MARGIN = 2, FUN = function(x) round(prop.table(x)*100,2))
@@ -110,7 +118,21 @@ for(i in 1:nrow(truth_discernment)){
 }
 truth_discernment <- truth_discernment[,-2] # remove headline order
 
+# Drop full NA rows
+truth_discernment <- truth_discernment %>% 
+  drop_na()
+
 ```
+
+
+```{r}
+
+lapply(colnames(truth_discernment), function(i) tblFun(truth_discernment[,i]))
+
+lapply(colnames(truth_discernment), function(i) tblFun_II(truth_discernment[,i], truth_discernment$introduction.1.player.assigned_group))
+
+```
+
 
 ## Helper Functions
 
@@ -229,6 +251,7 @@ manipulativeness_identification <- manipulativeness_identification[,-c(2:3)]
 
 # Convert group variable into factor
 manipulativeness_identification$introduction.1.player.assigned_group <- as.factor(manipulativeness_identification$introduction.1.player.assigned_group)
+
 
 ```
 
@@ -522,6 +545,18 @@ process_vectors <- function(input_list) {
   })
   return(processed_list)
 }
+
+
+
+
+
+participant_row_split <- str_split(str_remove_all(temp_df$survey.1.player.detect_misinfo_quiz7_2, "\\'|\\]|\\[|[:digit:]"), ",  ")
+participant_row_clean <- process_vectors(participant_row_split)
+
+
+tblFun(sapply(participant_row_clean, function(i) any(i %in% "Discrediting opponents")))
+tblFun(sapply(participant_row_clean[manipulativeness_identification$survey.1.player.detect_misinfo_quiz7_1 == "Yes" & manipulativeness_identification$introduction.1.player.assigned_group %in% "Debunking_Doctor"], function(i) any(i %in% "Discrediting opponents")))
+
 
 
 ############# ----------------------------------------------------------------------------------------------------------------------
@@ -838,7 +873,7 @@ confusion_matrix_df <- confusion_matrix_for_all_participants("Discrediting oppon
 anova_TPR_TNR_FPR_FNR_manipulation(confusion_matrix_df) # ANOVA TEST
 
 # Show the differences in a data.frame
-cbind(group = tempf_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
+cbind(group = temp_df$introduction.1.player.assigned_group, confusion_matrix_df) %>% 
   group_by(group) %>% 
   summarise_all(list(mean))
 
@@ -1257,6 +1292,7 @@ test <- temp_df[,paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_2")]
 
 ```
 
+
 # Confidence in Manipulation Technique Identification
 
 ```{r}
@@ -1277,21 +1313,6 @@ manipulation_technique_actual <- list("1" = c("Spreading Conspiracy theories", "
                                       "14" = c("Spreading Conspiracy theories" , "Impersonating people through fake accounts"), 
                                       "15" = NA, 
                                       "16" = NA)
-
-
-discrediting_opponents_col_idx <- seq(from = 2, to = ncol(temp_df), by = 6)
-emotional_language_col_idx <- seq(from = 3, to = ncol(temp_df), by = 6)
-polarisation_col_idx <- seq(from = 4, to = ncol(temp_df), by = 6)
-impersonating_col_idx <- seq(from = 5, to = ncol(temp_df), by = 6)
-conspiracy_theory_col_idx <- seq(from = 6, to = ncol(temp_df), by = 6)
-trolling_col_idx <- seq(from = 7, to = ncol(temp_df), by = 6)
-
-correct_identification_columns <- c(discrediting_opponents_col_idx[c(7, 10)], 
-  emotional_language_col_idx[c(1:5,10)],
-  polarisation_col_idx[4],
-  impersonating_col_idx[c(5 , 14)],
-  conspiracy_theory_col_idx[c(1:5, 10, 14)],
-  trolling_col_idx[6])
 
 ```
 
@@ -1353,6 +1374,23 @@ temp_df <- temp_df[,-c(2:3)]
 temp_df[,-1] <- temp_df[,-1] %>% mutate_all(as.numeric)
 
 ```
+
+```{r}
+discrediting_opponents_col_idx <- seq(from = 2, to = ncol(temp_df), by = 6)
+emotional_language_col_idx <- seq(from = 3, to = ncol(temp_df), by = 6)
+polarisation_col_idx <- seq(from = 4, to = ncol(temp_df), by = 6)
+impersonating_col_idx <- seq(from = 5, to = ncol(temp_df), by = 6)
+conspiracy_theory_col_idx <- seq(from = 6, to = ncol(temp_df), by = 6)
+trolling_col_idx <- seq(from = 7, to = ncol(temp_df), by = 6)
+
+correct_identification_columns <- c(discrediting_opponents_col_idx[c(7, 10)], 
+  emotional_language_col_idx[c(1:5,10)],
+  polarisation_col_idx[4],
+  impersonating_col_idx[c(5 , 14)],
+  conspiracy_theory_col_idx[c(1:5, 10, 14)],
+  trolling_col_idx[6])
+```
+
 
 ## Analysis
 
@@ -1474,13 +1512,14 @@ for(i in 1:nrow(temp_df)){
 # Remove order columns
 temp_df <- temp_df[,-c(2:3)]
 
+# Extract the sharing_propensity
+sharing_propensity <- temp_df[,paste0("survey.1.player.detect_misinfo_quiz",1:16,"_4")]
+sharing_propensity <- data.frame(lapply(sharing_propensity, as.numeric))
 
 # Perceived Manipulativeness
-temp_df[,paste0("survey.1.player.detect_misinfo_quiz",1:16,"_1")]
+perceived_manipulativeness <- ifelse(temp_df[,paste0("survey.1.player.detect_misinfo_quiz",1:16,"_1")] == "Yes", TRUE, FALSE)
 
 ```
-
-## Helper Functions
 
 ## Analysis
 
@@ -1501,31 +1540,238 @@ temp_df[,paste0("survey.1.player.detect_misinfo_quiz",1:16,"_1")]
 
 ########## Hypotheses --------------------------------------------------------------------
 # 1. Avg. sharing intentions ➡️ for Online, Offline & Online_Offline
-TukeyHSD(aov(rowMeans(temp_df[,-1]) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(sharing_propensity) ~ temp_df$introduction.1.player.assigned_group))
 
 # 2. Avg. sharing intentions for actual manipulative posts ⬇️ for Online, Offline & Online_Offline
-TukeyHSD(aov(rowMeans(temp_df[,-1][,manipulativeness_actual_bool]) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(sharing_propensity[,manipulativeness_actual_bool]) ~ temp_df$introduction.1.player.assigned_group))
 
 # 3. Avg. sharing intentions for actual non-manipulative posts ➡️ for Online, Offline & Online_Offline
-TukeyHSD(aov(rowMeans(temp_df[,-1][,!manipulativeness_actual_bool]) ~ temp_df$introduction.1.player.assigned_group))
+TukeyHSD(aov(rowMeans(sharing_propensity[,!manipulativeness_actual_bool]) ~ temp_df$introduction.1.player.assigned_group))
 
 # 4. Avg. sharing intentions for perceived as manipulative posts ⬇️ for Online, Offline & Online_Offline
-
+sharing_propensity_temp <- sharing_propensity
+sharing_propensity_temp[!perceived_manipulativeness] <- NA
+TukeyHSD(aov(rowMeans(sharing_propensity_temp, na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
 
 # 5. Avg. sharing intentions for perceived as non-manipulative posts ➡️ for Online, Offline & Online_Offline
-
+sharing_propensity_temp <- sharing_propensity
+sharing_propensity_temp[perceived_manipulativeness] <- NA
+TukeyHSD(aov(rowMeans(sharing_propensity_temp, na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
 
 # 6. Avg. sharing intentions for correctly perceived as manipulative posts ⬇️ for Online, Offline & Online_Offline
+sharing_propensity_temp <- sharing_propensity[,manipulativeness_actual_bool]
+sharing_propensity_temp[perceived_manipulativeness[,manipulativeness_actual_bool]] <- NA
+TukeyHSD(aov(rowMeans(sharing_propensity_temp, na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+
 # 7. Avg. sharing intentions for falsely perceived as manipulative posts ⬇️ for Online, Offline & Online_Offline
+sharing_propensity_temp <- sharing_propensity[,!manipulativeness_actual_bool]
+sharing_propensity_temp[perceived_manipulativeness[,!manipulativeness_actual_bool]] <- NA
+TukeyHSD(aov(rowMeans(sharing_propensity_temp, na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+
 # 8. Avg. sharing intentions for correctly perceived as non-manipulative posts ➡️ for Online, Offline & Online_Offline
+sharing_propensity_temp <- sharing_propensity[,manipulativeness_actual_bool]
+sharing_propensity_temp[!perceived_manipulativeness[,manipulativeness_actual_bool]] <- NA
+TukeyHSD(aov(rowMeans(sharing_propensity_temp, na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
+
 # 9. Avg. sharing intentions for falsely perceived as non-manipulative posts ➡️ for Online, Offline & Online_Offline
+sharing_propensity_temp <- sharing_propensity[,manipulativeness_actual_bool]
+sharing_propensity_temp[!perceived_manipulativeness[,manipulativeness_actual_bool]] <- NA
+TukeyHSD(aov(rowMeans(sharing_propensity_temp, na.rm = T) ~ temp_df$introduction.1.player.assigned_group))
 
-Secondary Analysis
+# Secondary Analysis
+ 
+# 1. Repeat the primary analysis by manipulation technique by group of posts (HPV vs Non-HPV) --> this will inform to what extent findings # differ by group of posts
 
-1. Repeat the primary analysis by manipulation technique by group of posts (HPV vs Non-HPV) --> this will inform to what extent findings differ by group of posts
-2. Repeat all previous analyses by gender and religion
-3. Explore which perceived manipulations techniques most strongly interact with sharing behaviour by looking at avg. sharing intention for manipulative posts where technique X is perceived for Online, Offline & Online_Offline compared to Control
+# 2. Repeat all previous analyses by gender and religion
+
+# 3. Explore which perceived manipulations techniques most strongly interact with sharing behaviour by looking at avg. sharing intention for manipulative posts where technique X is perceived for Online, Offline & Online_Offline compared to Control
+
 
 ```
 
+# Vaccine Community Experience
+
+## Cleaning
+
+```{r}
+# Create temp df
+temp_df <- combined %>% 
+  select(introduction.1.player.assigned_group, survey.1.player.vax_hes_1, survey.1.player.vax_hes_2)
+
+# Remove NA rows
+temp_df[temp_df == ""] <- NA 
+temp_df <- temp_df %>% 
+  filter(!is.na(introduction.1.player.assigned_group))
+
+
+# Make 88's into NAs
+temp_df[temp_df == "88 I don't know"] <- NA
+
+# Convert Yes/No into 1s and 0s
+temp_df[temp_df == "1 Yes"] <- 1
+temp_df[temp_df == "2 No"] <- 0
+
+```
+
+## Analysis
+
+```{r}
+
+# vax_hes_1: Have you ever received or heard negative information about vaccinations?
+# vax_hes_2: Do leaders (religious or political leaders, teachers, health care workers) in your community support vaccinations for infants and children?
+
+# 1. Descriptive Stats by treatment group (frequency tables)
+tblFun_II(temp_df$survey.1.player.vax_hes_1, temp_df$introduction.1.player.assigned_group)
+tblFun_II(temp_df$survey.1.player.vax_hes_2, temp_df$introduction.1.player.assigned_group)
+
+# 2. Test the difference
+TukeyHSD(aov(survey.1.player.vax_hes_2 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_2 ~ introduction.1.player.assigned_group, data = temp_df))
+
+```
+
+# Vaccine Attitudes
+
+1. Childhood vaccines are important for my child's health
+2. Childhood vaccines are effective
+3. Having my child vaccinated is important for the health of others in my community
+4. All childhood vaccines offered by the government program in my community are beneficial. New vaccines carry more risks than older vaccines
+5. The information I receive about vaccines from the vaccine program is reliable and trustworthy
+6. Getting vaccines is a good way to protect my child/children from disease.
+7. Generally I do what my doctor or health care provider recommends about vaccines for my child/children
+8. I am concerned about serious adverse effects of vaccines
+9. My child/children does or do not need vaccines for diseases that are not common anymore
+
+## Cleaning
+
+```{r}
+# Create temp df
+temp_df <- combined %>% 
+  select(introduction.1.player.assigned_group, paste0("survey.1.player.vax_hes_",3:12))
+
+# Remove NA rows
+temp_df[temp_df == ""] <- NA 
+temp_df <- temp_df %>% 
+  filter(!is.na(introduction.1.player.assigned_group))
+
+
+# How big a problem are the 88s? 1.86% - should be fine
+tblFun(unlist(temp_df[,-1]))
+
+# Convert Characters into Numerics
+temp_df[temp_df == "5 Strongly Agree"] <- 5
+temp_df[temp_df == "4 Agree"] <- 4
+temp_df[temp_df == "3 Neither agree nor disagree"] <- 3
+temp_df[temp_df == "2 Disagree"] <- 2
+temp_df[temp_df == "1 Strongly Disagree"] <- 1
+temp_df[temp_df == "88 I don't know"] <- NA
+temp_df[temp_df == "99 Refuse to answer"] <- NA
+
+        
+```
+
+## Analysis
+
+```{r}
+# Primary Analysis
+
+# Level of Analysis
+# Individual Level
+
+# Method
+# 1. Transform Likert scale to a numeric variable
+# 2. Pairwise t.test between C<>Online, C<>Online_Offline, C<>Offline, Online<>Offline, Online<>Online_Offline, Offline<>Online_Offline (all)
+
+# Hypotheses
+# 1. Vax_hes_3-6, 8-10 ⬆️ for Online, Offline, Online_Offline
+# 2. Vax_hes_7, 11-12 ⬇️ for Online, Offline, Online_Offline
+# 3. Vax_hes_7 ➡️ for Online, Offline, Online_Offline
+
+TukeyHSD(aov(survey.1.player.vax_hes_3 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_4 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_5 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_6 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_7 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_8 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_9 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_10 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_11 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_12 ~ introduction.1.player.assigned_group, data = temp_df))
+
+# Secondary Analysis
+# 1. Repeat primary analysis by Gender & Religion to understand if the treatment effect is stronger for some religions or genders.
+
+```
+
+
+# Vaccine Behavioural Intentions
+
+1. Is your daughter vaccinated against HPV?
+2. How likely are you to get more information about the HPV vaccine for your child?
+3. How likely are you to consider getting the vaccine for your child?
+4. How likely are you to try to get the vaccine for your child?
+5. How likely are you to actually get the vaccine for your child?
+
+
+
+## Cleaning
+
+```{r}
+# Create temp df
+temp_df <- combined %>% 
+  select(introduction.1.player.assigned_group, paste0("survey.1.player.vax_beh_int_",1:5))
+
+# Remove NA rows
+temp_df[temp_df == ""] <- NA 
+temp_df <- temp_df %>% 
+  filter(!is.na(introduction.1.player.assigned_group))
+
+
+# How big a problem are the 88s?
+tblFun(unlist(temp_df[,-1]))
+
+# Make 88's into NAs
+temp_df[temp_df == "88 Don't know"] <- NA
+
+# Convert Yes/No into 1s and 0s
+temp_df[temp_df == "1 Yes"] <- 1
+temp_df[temp_df == "2 No"] <- 0
+
+```
+
+## Analysis
+
+```{r}
+
+tblFun_II(temp_df$introduction.1.player.assigned_group, temp_df$survey.1.player.vax_beh_int_1)
+tblFun_II(temp_df$survey.1.player.vax_beh_int_2, temp_df$introduction.1.player.assigned_group)
+tblFun_II(temp_df$survey.1.player.vax_beh_int_3, temp_df$introduction.1.player.assigned_group)
+tblFun_II(temp_df$survey.1.player.vax_beh_int_4, temp_df$introduction.1.player.assigned_group)
+tblFun_II(temp_df$survey.1.player.vax_beh_int_5, temp_df$introduction.1.player.assigned_group)
+
+
+# Primary Analysis
+
+# Level of Analysis
+# Individual Level
+
+# Method
+# 1. Transform Likert scale to a numeric variable
+# 2. Pairwise t.test between C<>Online, C<>Online_Offline, C<>Offline, Online<>Offline, Online<>Online_Offline, Offline<>Online_Offline (all)
+
+# Hypotheses
+# 1. vax_beh_int_1-5 ⬆️ for Online, Offline, Online_Offline
+
+TukeyHSD(aov(survey.1.player.vax_beh_int_1 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_beh_int_2 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_beh_int_3 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_beh_int_4 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_beh_int_5 ~ introduction.1.player.assigned_group, data = temp_df))
+
+
+# Secondary Analysis
+# 1. Repeat primary analysis by Gender & Religion to understand if the treatment effect is stronger for some religions or genders.
+
+
+```
 
