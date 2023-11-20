@@ -28,13 +28,14 @@ rm(miss_pkgs, pkgs)
 
 *Jonathan's Approach:* This study is design for urban and peri-urban areas in and around Nairobi. Accordingly, we labelled all wards in Nairobi and surrounding counties (Kiambu, Machakos, Kajiado) with the help of Field Officers as rural, peri-urban and urban. Within the wards labelled as peri-urban and urban, we randomly allocated circular clusters with a 1-mile radius (the minimum geographical targeting area Facebook's advertising ecosystem allows). 
 
+# Sampling Clusters
 
-## Read in geo-data and geo-entity labels
+## 1. Read in geo-data and geo-entity labels
 
 ```{r}
 
 # Read in Shapefile
-shp_kenya_adm3 <- readOGR(dsn = "gadm41_KEN_shp/gadm41_KEN_3.shp")
+shp_kenya_adm3 <- readOGR(dsn = "Raw Data/gadm41_KEN_shp/gadm41_KEN_3.shp")
 
 # Select relevant counties
 shp_kenya_adm3 <- shp_kenya_adm3[shp_kenya_adm3$NAME_1 %in% c("Nairobi", "Machakos", "Kajiado", "Kiambu"),]
@@ -58,62 +59,62 @@ writeOGR(shp_kenya_adm3, dsn = 'gadm41_KEN_shp', layer = 'gadm41_KEN_3_urban_rur
 
 ```
 
-## Distribute points
+## 2. Distribute points
 
 ```{r}
 
-# Select only polygons that are urban or peri-urban
-shp_kenya_adm3 <- shp_kenya_adm3[shp_kenya_adm3$geo_entity %in% c("urban", "peri-urban"),]
-
-# Define the bounds of the polygon underlying the geospatial object
-bounds <- shp_kenya_adm3@polygons[[1]]@Polygons[[1]]@coords
-
-# Define the distance threshold (2 miles in this case)
-distance_threshold <- 2 * 1609.34 + 200  # 1 mile = 1609.34 meters + Buffer between Clusters
-
-# Create an empty spatial points object
-points <- SpatialPoints(data.frame(x = 0, y = 0), proj4string = CRS(proj4string(shp_kenya_adm3)))[-1,]
-
-# Set a seed
-set.seed(92)
-
-# Generate random points until reaching the desired number (100 in this case)
-count_points <- 1
-count_tries <- 1
-while(length(points) < 1000) {
-  # Generate a random point within the bounds of the polygon
-  random_point <- spsample(shp_kenya_adm3, 1, type = "random", iter=20)
-  #print(random_point)
-  print(count_tries)
-  
-  # Check if the new point is at least 2 miles away from existing points
-  if(length(points) > 0) {
-    distances <- raster::pointDistance(points, random_point, lonlat = T)
-    count_tries <- count_tries + 1
-
-    if(min(distances) < distance_threshold) {
-      next  # Skip to the next iteration if the minimum distance is less than the threshold
-    }
-  }
-  
-  # Add the new point to the points object
-  points <- rbind(points, random_point)
-  print(paste("New Point:", count_points))
-  count_points <- count_points + 1
-}
-
-# Plot the points within the polygon
-plot(shp_kenya_adm3)
-points(points, col = "red", pch = 1)
-
-# Export
-points_df <- SpatialPointsDataFrame(coords = data.frame(points), data = data.frame(cluster_id = 1:length(points)))
-temp <- as(points,"SpatialPointsDataFrame")
-writeOGR(obj=points_df, dsn="clusters", layer="points", driver="ESRI Shapefile", overwrite_layer = TRUE) # this is in equal area projection
+## Select only polygons that are urban or peri-urban
+#shp_kenya_adm3 <- shp_kenya_adm3[shp_kenya_adm3$geo_entity %in% c("urban", "peri-urban"),]
+#
+## Define the bounds of the polygon underlying the geospatial object
+#bounds <- shp_kenya_adm3@polygons[[1]]@Polygons[[1]]@coords
+#
+## Define the distance threshold (2 miles in this case)
+#distance_threshold <- 2 * 1609.34 + 200  # 1 mile = 1609.34 meters + Buffer between Clusters
+#
+## Create an empty spatial points object
+#points <- SpatialPoints(data.frame(x = 0, y = 0), proj4string = CRS(proj4string(shp_kenya_adm3)))[-1,]
+#
+## Set a seed
+#set.seed(92)
+#
+## Generate random points until reaching the desired number (100 in this case)
+#count_points <- 1
+#count_tries <- 1
+#while(length(points) < 1000) {
+#  # Generate a random point within the bounds of the polygon
+#  random_point <- spsample(shp_kenya_adm3, 1, type = "random", iter=20)
+#  #print(random_point)
+#  print(count_tries)
+#  
+#  # Check if the new point is at least 2 miles away from existing points
+#  if(length(points) > 0) {
+#    distances <- raster::pointDistance(points, random_point, lonlat = T)
+#    count_tries <- count_tries + 1
+#
+#    if(min(distances) < distance_threshold) {
+#      next  # Skip to the next iteration if the minimum distance is less than the threshold
+#    }
+#  }
+#  
+#  # Add the new point to the points object
+#  points <- rbind(points, random_point)
+#  print(paste("New Point:", count_points))
+#  count_points <- count_points + 1
+#}
+#
+## Plot the points within the polygon
+#plot(shp_kenya_adm3)
+#points(points, col = "red", pch = 1)
+#
+## Export
+#points_df <- SpatialPointsDataFrame(coords = data.frame(points), data = data.frame(cluster_id = 1:length(points)))
+#temp <- as(points,"SpatialPointsDataFrame")
+#writeOGR(obj=points_df, dsn="clusters", layer="points", driver="ESRI Shapefile", overwrite_layer = TRUE) # this is in equal area projection
 
 ```
 
-## Select clusters with a population probability weight
+## 3. Select clusters with a population probability weight
 
 ```{r}
 
@@ -130,7 +131,7 @@ number_clusters <- 116
 #write.csv(ken_general_2020_cropped, "population_density_data/ken_general_2020_cropped.csv")
 
 # Read in the filtered data
-ken_general_2020_cropped <- read.csv("population_density_data/ken_general_2020_cropped.csv")
+ken_general_2020_cropped <- read.csv("Raw Data/population_density_data/ken_general_2020_cropped.csv")
 
 # Convert to sf object
 ken_general_2020_cropped_sf <- st_as_sf(ken_general_2020_cropped, coords = c("longitude", "latitude"), crs = 4326)
@@ -174,29 +175,66 @@ set.seed(92)
 # Sample
 selected_cluster_ids <- sample(x = aggregated_pop_cluster$cluster_id, prob = aggregated_pop_cluster$x, size = number_clusters, replace = F)
 
-# Read in a Kenya map to enable plotting it.
-Kenya_map <- st_read("gadm41_KEN_shp/gadm41_KEN_3_urban_rural_classified.shp")
-
-# PLOT IT
-ggplot() +
-  geom_sf(data = Kenya_map, color = "black") + 
-  geom_point(data = joined_data_df_temp, aes(x = Longitude, y = Latitude, color = ken_general_2020), alpha = 0.1, size = 0.00000001) +
-  geom_point(data = aggregated_pop_cluster[aggregated_pop_cluster$cluster_id %in% selected_cluster_ids,], aes(x = coords.x1, y = coords.x2, alpha = x), size = 1.609, color = "orange") +
-  scale_color_continuous(type = "viridis") +
-  theme_minimal()
-
 # Export clusters to look at them in QGIS
 selected_clusters <- clusters_sf[clusters_sf$cluster_id %in% selected_cluster_ids,]
 st_write(selected_clusters, "clusters/randomly_selected_clusters.shp", append = F)
 
+# Export buffered clusters as well 
+selected_clusters_buffered <- clusters_circles_sf[clusters_circles_sf$cluster_id %in% selected_cluster_ids,]
+st_write(selected_clusters_buffered, "clusters/randomly_selected_clusters_buffered.shp", append = F)
+
 ```
 
-# Allocating clusters to Treatment Groups
+## 4. Replace anticipated logistically unfeasible clusters
+
+```{r}
+
+############################ Re-Sampling 1
+
+fo_assessment_data_collection_issues_by_cluster <- read_sheet("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=1915233803", sheet = "[old] Clusters Probability Data Collecton Issues")
+
+# Extracting all cluster IDs that will likely face data collection issues.
+cluster_ids_issue_identified_v1 <- fo_assessment_data_collection_issues_by_cluster$cluster_id[fo_assessment_data_collection_issues_by_cluster$Final_Assessment == "Possible issue"]
+
+# Resample them
+idx_eligible_for_resample <- !(aggregated_pop_cluster$cluster_id %in% selected_cluster_ids)
+target_clusters_n <- 108
+number_to_resample <- target_clusters_n - (sum(!idx_eligible_for_resample) - length(cluster_ids_issue_identified_v1))
+
+# Set a seed
+set.seed(10)
+
+# Resample
+new_selected_cluster_ids_v2 <- sample(x = aggregated_pop_cluster$cluster_id[idx_eligible_for_resample], prob = aggregated_pop_cluster$x[idx_eligible_for_resample], size = number_to_resample, replace = F)
+
+temp <- clusters_circles_sf[clusters_circles_sf$cluster_id %in% new_selected_cluster_ids_v2,]
+st_write(temp, "clusters/sample_v2.shp", append = F)
+
+
+# Create a new vector outlining the currently selected clusters
+logistically_feasible_clusters <- selected_cluster_ids[!(selected_cluster_ids %in% cluster_ids_issue_identified_v1)]
+selected_cluster_ids_v2 <- sort(c(new_selected_cluster_ids_v2, logistically_feasible_clusters))
+
+############################ Final sampled Clusters
+
+# Create a new vector outlining the final selected clusters
+logistically_infeasible_clusters <- c(cluster_ids_issue_identified_v1)
+logistically_feasible_clusters <- selected_cluster_ids[!(selected_cluster_ids %in% logistically_infeasible_clusters)]
+selected_cluster_ids_v2 <- sort(c(logistically_feasible_clusters, new_selected_cluster_ids_v2))
+
+# Export final buffered clusters 
+selected_clusters_buffered_v2 <- clusters_circles_sf[clusters_circles_sf$cluster_id %in% selected_cluster_ids_v2,]
+st_write(selected_clusters_buffered_v2, "clusters/randomly_selected_clusters_buffered_v2.shp", append = F)
+
+```
+
+
+## 5. Allocating clusters to Treatment Groups
 
 ```{r}
 
 # Read in buffered clusters
-selected_buffered_clusters <- st_read("clusters/randomly_selected_clusters_buffered.shp")
+selected_buffered_clusters <- st_read("clusters/randomly_selected_clusters_buffered_v2.shp")
 
 # Randomly allocate clusters to treatment groups
 set.seed(4)
@@ -206,142 +244,279 @@ selected_buffered_clusters$group <- complete_ra(nrow(selected_buffered_clusters)
 st_crs(selected_buffered_clusters) <- st_crs(st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_3_urban_rural_classified.shp"))
 st_write(selected_buffered_clusters, "clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp", append = F)
 
+# Also export csv
+final_clusters_allocated_df <- data.frame(selected_buffered_clusters)[,c("cluster_id", "group")]
+write.csv(final_clusters_allocated_df, "Data Exports/vcf_final_clusters_allocated.csv")
 ```
 
-
-
-# Making recruitment easier for FOs (Sample Sizes by County and Subcounty)
+## 6. Adding potential clusters to falsely labelled areas 
 
 ```{r}
 
-# Read in clusters
-selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
-
-# Read in county level geospatial data - subcounties
-Kenya_map_sub_counties <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_2.shp")
-
-# Intersect subcounty map with clusters
-intersection_subcounty_map_clusters <- st_intersection(Kenya_map_ward_level, selected_clusters_buffered_allocated) 
-intersection_subcounty_map_clusters$area <- st_area(intersection_subcounty_map_clusters)
-
-# Compute Endline Sample Size by subcounty
-data.frame(intersection_subcounty_map_clusters) %>% 
-  group_by(NAME_1, NAME_2) %>% # BIG CONSTRUCTION SITEEEEEEEEEEEEE ONLY FROM 227 TO 235
-  summarise(sum_area = sum(area), .groups = "drop") %>% 
-  mutate(share_area = as.numeric(sum_area/sum(sum_area))) %>% 
-  ungroup() %>% 
-  mutate(sample_size_recruitment = )
-  mutate(sample_size_endline = round(share_area*8500)) %>% 
-  mutate(FOs_needed_endline = (sample_size_endline/sum(sample_size_endline))*67))
-
-# Add the overraching circles to nearby subcounties
-c <- c %>% 
-  filter(NAME_1 %in% c("Nairobi", "Machakos", "Kiambu", "Kajiado")) 
-
-c[c$NAME_2 == "Mwala",]$sample_size <- c[c$NAME_2 == "Mwala",]$sample_size + 10
-c[c$NAME_2 == "Yatta",]$sample_size <- c[c$NAME_2 == "Yatta",]$sample_size + 6
-c[c$NAME_2 == "Thika Town",]$sample_size <- c[c$NAME_2 == "Thika Town",]$sample_size + 100
-c[c$NAME_2 == "Gatundu North",]$sample_size <- c[c$NAME_2 == "Gatundu North",]$sample_size + 20
-c[c$NAME_2 == "Lari",]$sample_size <- c[c$NAME_2 == "Lari",]$sample_size + 60
-c[c$NAME_2 == "Lari",]$sample_size <- c[c$NAME_2 == "Lari",]$sample_size + 30
-
-# Compute FOs needed 
-c$fo_needed_recruitment_endline <- ((c$sample_size/sum(c$sample_size))*85)
-
-# Export to Gsheets
-range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
-            sheet = "FO Needs",
-            c[,c(1,2,5,6)])
+# # Read in the clusters to prevent cluster ID duplicates
+# max_cluster_id_previous <- as.numeric(max(st_read("clusters/points.shp")$cluster_id))
+# 
+# ## Select only polygons that are urban or peri-urban
+# shp_kenya_adm3_additions <- shp_kenya_adm3[shp_kenya_adm3$NAME_3 %in% c("Olkeri", "Kaputiei North", "Keekonyokie", "Dalalekutuk", "Ildamat") # & shp_kenya_adm3$NAME_1 == "Kajiado",]
+#  
+#  # Define the bounds of the polygon underlying the geospatial object
+#  bounds <- shp_kenya_adm3_additions@polygons[[1]]@Polygons[[1]]@coords
+#  
+#  # Define the distance threshold (2 miles in this case)
+#  distance_threshold <- 2 * 1609.34 + 200  # 1 mile = 1609.34 meters + Buffer between Clusters
+#  
+#  # Create an empty spatial points object
+#  points <- SpatialPoints(data.frame(x = 0, y = 0), proj4string = CRS(proj4string(shp_kenya_adm3)))[-1,]
+#  
+#  # Set a seed
+#  set.seed(92)
+#  
+#  # Generate random points until reaching the desired number (100 in this case)
+#  count_points <- 1
+#  count_tries <- 1
+#  while(length(points) < 1000) {
+#    # Generate a random point within the bounds of the polygon
+#    random_point <- spsample(shp_kenya_adm3_additions, 1, type = "random", iter=20)
+#    #print(random_point)
+#    print(count_tries)
+#    
+#    # Check if the new point is at least 2 miles away from existing points
+#    if(length(points) > 0) {
+#      distances <- raster::pointDistance(points, random_point, lonlat = T)
+#      count_tries <- count_tries + 1
+#  
+#      if(min(distances) < distance_threshold) {
+#        next  # Skip to the next iteration if the minimum distance is less than the threshold
+#      }
+#    }
+#    
+#    # Add the new point to the points object
+#    points <- rbind(points, random_point)
+#    print(paste("New Point:", count_points))
+#    count_points <- count_points + 1
+#  }
+#  
+#  # Plot the points within the polygon
+#  plot(shp_kenya_adm3)
+#  points(points, col = "red", pch = 1)
+#  
+#  
+#  # Export
+#  points_df <- SpatialPointsDataFrame(coords = data.frame(points), data = data.frame(cluster_id = seq(from = max_cluster_id_previous+1, by = # 1, length.out = length(points))))
+# writeOGR(obj=points_df, dsn="clusters", layer="additional_points", driver="ESRI Shapefile", overwrite_layer = TRUE) # this is in equal area # # projection
 
 ```
 
-# Export List of Cluster IDs and where they are (+ sample sizes) (also export sample size by county and subcounty)
+## 7. Moving & Replacing logistically actually difficult clusters
 
 ```{r}
-
-# Read in clusters
-selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
-
-# Read in county level geospatial data - wards
-Kenya_map_ward_level <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_3_urban_rural_classified.shp")
-
-# Intersect ward map with clusters
-intersection_ward_map_clusters <- st_intersection(Kenya_map_ward_level, selected_clusters_buffered_allocated) 
-intersection_ward_map_clusters$area <- st_area(intersection_ward_map_clusters)
-
-# Before computing areas with which the cluster overlaps and the group the cluster is allocated to prep the recruitment discrepancy in sample size for the clusters
-recruitment_baseline_samplesize_discrepancy <- c("Control" = 121, "Online_Only" = 121, "Offline_Only" = 143, "Online_Offline" = 143)
-
-intersection_ward_map_clusters_df <- data.frame(intersection_ward_map_clusters) %>% 
-  group_by(cluster_id) %>% 
-  summarise(group = unique(group), County = toString(unique(NAME_1)), Sub_County = toString(unique(NAME_2)), Ward = toString(unique(NAME_3))) %>%
-  ungroup() %>% 
-  mutate(sample_size_recruitment_baseline = unname(recruitment_samplesize_discrepancy[group])) %>% 
-  mutate(sample_size_endline = 85) %>% 
-  arrange(County, Sub_County)
+move_cluster <- function(cluster_id, longitude, latitude){
   
-
-# Export to Gsheets
-range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
-            sheet = "Clusters Locations & Sample Sizes",
-            intersection_ward_map_clusters_df, 
-            reformat = F)
-
-
-
-# EXPORT Sample size by County and Subcounty
-sample_size_county_subcounty <- data.frame(intersection_ward_map_clusters) %>% 
-  group_by(NAME_1, NAME_2) %>% 
-  summarise() %>%
-  ungroup() %>% 
-  mutate(sample_size_recruitment = unname(recruitment_samplesize_discrepancy[group])) %>% 
-  mutate(sample_size_baseline = 106) %>% 
-  mutate(sample_size_endline = 85) %>% 
-  arrange(County, Sub_County)
+  # Create new point acting as new cluster center
+  temp_new_cluster_center <- st_sf(geometry = st_sfc(st_point(c(longitude, latitude)), crs = st_crs(clusters)))
   
-
-# Export to Gsheets
-range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
-            sheet = "Clusters Locations & Sample Sizes",
-            intersection_ward_map_clusters_df, 
-            reformat = F)
-
+  # Buffer the new cluster center to be a circle
+  temp_new_cluster <- st_buffer(temp_new_cluster_center, dist = radius_meters)
+  
+  # Add the circle to replace the geometry of the cluster with "cluster_id"
+  clusters[clusters$cluster_id == cluster_id,]$geometry <<- temp_new_cluster$geometry
+}
 ```
 
-# Assign responsibility to SFO by Cluster
+
+### 7.1 - V1
 
 ```{r}
 
-# Read in clusters
-selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
+# Read in shapefiles and population density csv
+additional_points <- st_read("clusters/additional_points.shp")
+clusters <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
+all_initial_potential_clusters <- st_read("clusters/points.shp")
+ken_general_2020_cropped <- read.csv("Raw Data/population_density_data/ken_general_2020_cropped.csv")
+# Convert to csv to sf object
+ken_general_2020_cropped_sf <- st_as_sf(ken_general_2020_cropped, coords = c("longitude", "latitude"), crs = 4326)
 
-# Read in county level geospatial data
-Kenya_map_county_level <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_1.shp")
+# Set the radius in meters (1 mile = 1609.34 meters)
+radius_meters <- 1609.34
 
-# Intersect ward map with clusters
-intersection_county_map_clusters <- st_intersection(Kenya_map_county_level, selected_clusters_buffered_allocated) 
-intersection_county_map_clusters$area <- st_area(intersection_county_map_clusters)
 
-# Compute the majority share by cluster and assign SFOs (highlight clusters that are heavily on the border where the majority is below < 75%)
-cluster_bycounty_share <- data.frame(intersection_county_map_clusters) %>% 
-  group_by(cluster_id) %>% 
-  summarise(NAME_1, share_cluster_area = as.numeric(area/sum(area))) %>% 
-  filter(NAME_1 %in% c("Nairobi", "Machakos", "Kajiado", "Kiambu")) %>% 
-  filter(share_cluster_area == max(share_cluster_area)) %>% 
-  arrange(NAME_1)
+############################## 1. Moving Clusters
 
-fo_assigned_county <- c("Nairobi" = "Martin", "Machakos" = "Billy", "Kajiado" = "Dennis", "Kiambu" = "Naom")
-cluster_bycounty_share$sfo_responsible <- unname(fo_assigned_county[cluster_bycounty_share$NAME_1])
+# Machakos
+move_cluster(345, 37.442614, -1.461225) # Cluster 345
+move_cluster(128, 37.369157, -1.315872) # Cluster 128
+move_cluster(186, 37.011971, -1.413045) # Cluster 186
+move_cluster(316, 37.271765, -1.222607) # Cluster 316
+move_cluster(425, 37.343927, -1.369312) # Cluster 425
+move_cluster(271, 37.340340, -1.288964) # Cluster 271
+move_cluster(192, 37.132348, -1.532216) # Cluster 192
 
-# Format into percentages
-cluster_bycounty_share$share_cluster_area_percentage <- paste0(round(cluster_bycounty_share$share_cluster_area*100), "%")
-cluster_bycounty_share$share_cluster_area <- NULL
+# Kiambu
+move_cluster(129, 36.797578, -1.134905) # Cluster 129
 
-# Export to Gsheets
-range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
-            sheet = "Clusters Probability of Data Collecton Issues",
-            cluster_bycounty_share[,1:3], 
-            reformat = F)
+################################ 2. Sampling New Clusters
+
+# Merge 
+all_current_potential_cluster <- rbind(all_initial_potential_clusters, additional_points)
+st_crs(all_current_potential_cluster) <- 4326 # Set CRS properly
+
+# Create circular polygons with a radius of 1 mile
+all_current_potential_cluster_buffered <- st_buffer(all_current_potential_cluster, dist = radius_meters)
+
+# Remove all additional points that overlap with old ones
+potential_cluster_overlap <- st_overlaps(all_current_potential_cluster_buffered)
+overlap_idx <- which(sapply(potential_cluster_overlap, function(i) any(i >= length(1)))) # Which idx are overlapping
+cluster_idx_to_remove <- overlap_idx[overlap_idx > max(all_initial_potential_clusters$cluster_id)]
+all_current_potential_cluster_buffered <- all_current_potential_cluster_buffered[-cluster_idx_to_remove,]
+
+# Export to look at
+st_write(all_current_potential_cluster_buffered, "clusters/points_and_additional_points.shp", append = F) 
+
+# Join clusters and population_points
+joined_data <- st_join(ken_general_2020_cropped_sf, all_current_potential_cluster_buffered, join = st_within)
+
+# Aggregate the sum of the population density for each polygon (cluster)
+aggregated_pop_cluster <- aggregate(joined_data$ken_general_2020, list(joined_data$cluster_id), sum)
+
+
+##################### Sample new ones for abandoned ones V1
+
+# Burned IDs --> Filter data for only eligible clusters to be re-sampled
+burned_cluster_ids <- read.csv("clusters/burned_ids.csv")[,-1]$cluster_id
+aggregated_pop_cluster_not_burned <- aggregated_pop_cluster[!(aggregated_pop_cluster$Group.1 %in% burned_cluster_ids),]
+
+# Abandon the following clusters --> Machakos: 360, 37, 197 / Kajiado: 248 / Kiambu: 281 == 5 clusters
+cluster_ids_remove <- c(360, 37, 197, 248, 281)
+
+# Set a seed
+set.seed(65927)
+
+# Sample 
+selected_cluster_ids <- sample(x = aggregated_pop_cluster_not_burned$Group.1, prob = aggregated_pop_cluster_not_burned$x, size = length(cluster_ids_remove), replace = F)
+# Newly added: 364  33 141  46 432
+
+# Now, replace the ID and geography of the 5 clusters that are to be removed in the "clusters" object with the new ones
+cluster_idx_replace <- which(clusters$cluster_id %in% cluster_ids_remove)
+
+# Extract polygons of new clusterIDs
+selected_clusters_new <- all_current_potential_cluster_buffered[all_current_potential_cluster_buffered$cluster_id %in% selected_cluster_ids,]
+
+# Re-Assign the cluster IDs and Geographies
+clusters[cluster_idx_replace,]$cluster_id <- selected_clusters_new$cluster_id
+clusters[cluster_idx_replace,]$geometry <- selected_clusters_new$geometry
+
+# Export
+st_write(clusters, "clusters/randomly_selected_clusters_buffered_allocated_to_groups_v2.shp", append = F)
+# Also export csv
+final_clusters_allocated_df <- data.frame(clusters)[,c("cluster_id", "group")]
+write.csv(final_clusters_allocated_df, "Data Exports/vcf_final_clusters_allocated.csv")
+
+
+read.csv("Data Exports/vcf_final_clusters_allocated.csv")
+
+```
+
+### 7.2 - V2
+
+```{r}
+
+# Read in shapefiles and population density csv
+additional_points <- st_read("clusters/additional_points.shp")
+clusters <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups_v2.shp")
+all_initial_potential_clusters <- st_read("clusters/points.shp")
+ken_general_2020_cropped <- read.csv("Raw Data/population_density_data/ken_general_2020_cropped.csv")
+# Convert to csv to sf object
+ken_general_2020_cropped_sf <- st_as_sf(ken_general_2020_cropped, coords = c("longitude", "latitude"), crs = 4326)
+
+# Read burned cluster_ids and add update the file based on the latest clusters
+burned_ids <- read.csv("clusters/burned_ids.csv")[,-1]
+burned_ids <- rbind(burned_ids, data.frame(cluster_id = clusters$cluster_id, group = clusters$group))
+burned_ids <- burned_ids[!duplicated(burned_ids),]
+
+
+# Set the radius in meters (1 mile = 1609.34 meters)
+radius_meters <- 1609.34
+
+############################## 1. Moving Clusters
+
+# Kiambu
+move_cluster(325, 36.85145, -1.17010) # Cluster 325
+move_cluster(444, 36.957456, -1.148411) # Cluster 444
+move_cluster(55, 36.607520, -0.9480321) # Cluster 55
+move_cluster(416, 36.62345, -0.89689) # Cluster 416
+move_cluster(443, 36.614437, -0.843287) # Cluster 443
+move_cluster(334, 36.652807, -1.114576) # Cluster 334
+move_cluster(218, 36.716431, -1.171960) # Cluster 218
+move_cluster(201, 36.791914, -1.096677) # Cluster 201
+
+# Kajiado
+move_cluster(39, 36.763241, -1.389647) # Cluster 39
+move_cluster(370, 36.730253, -1.377878) # Cluster 370
+
+# Machakos
+move_cluster(432, 37.561393, -1.421066) # Cluster 432
+
+
+# Nairobi
+move_cluster(283, 36.816093, -1.247868) # Cluster 283
+
+################################ 2. Sampling New Clusters
+
+# Merge 
+all_current_potential_cluster <- rbind(all_initial_potential_clusters, additional_points)
+st_crs(all_current_potential_cluster) <- 4326 # Set CRS properly
+
+# Create circular polygons with a radius of 1 mile
+all_current_potential_cluster_buffered <- st_buffer(all_current_potential_cluster, dist = radius_meters)
+
+# Remove all additional points that overlap with old ones
+potential_cluster_overlap <- st_overlaps(all_current_potential_cluster_buffered)
+overlap_idx <- which(sapply(potential_cluster_overlap, function(i) any(i >= length(1)))) # Which idx are overlapping
+cluster_idx_to_remove <- overlap_idx[overlap_idx > max(all_initial_potential_clusters$cluster_id)]
+all_current_potential_cluster_buffered <- all_current_potential_cluster_buffered[-cluster_idx_to_remove,]
+
+# Export to look at
+st_write(all_current_potential_cluster_buffered, "clusters/points_and_additional_points.shp", append = F) 
+
+# Join clusters and population_points
+joined_data <- st_join(ken_general_2020_cropped_sf, all_current_potential_cluster_buffered, join = st_within)
+
+# Aggregate the sum of the population density for each polygon (cluster)
+aggregated_pop_cluster <- aggregate(joined_data$ken_general_2020, list(joined_data$cluster_id), sum)
+
+
+##################### Sample new ones for abandoned ones V2
+
+# Burned IDs --> Filter data for only eligible clusters to be re-sampled
+aggregated_pop_cluster_not_burned <- aggregated_pop_cluster[!(aggregated_pop_cluster$Group.1 %in% burned_ids),]
+
+# Abandon the following clusters --> Machakos: 186, 414, 141 / Nairobi: 10, 363
+cluster_ids_remove <- c(186, 414, 141, 10, 363)
+selected_cluster_ids <- c(601, 605, 126, 622, 117)
+
+# Now, replace the ID and geography of the 5 clusters that are to be removed in the "clusters" object with the new ones
+cluster_idx_replace <- which(clusters$cluster_id %in% cluster_ids_remove)
+
+# Extract polygons of new clusterIDs
+selected_clusters_new <- all_current_potential_cluster_buffered[all_current_potential_cluster_buffered$cluster_id %in% selected_cluster_ids,]
+
+# Re-Assign the cluster IDs and Geographies
+clusters[cluster_idx_replace,]$cluster_id <- selected_clusters_new$cluster_id
+clusters[cluster_idx_replace,]$geometry <- selected_clusters_new$geometry
+
+# Slightly adjust the new clusters 
+move_cluster(605, 36.68635, -1.43192) # Cluster 605
+move_cluster(601, 36.684701, -1.396761) # Cluster 601
+move_cluster(126, 36.635812, -1.283102) # Cluster 126
+move_cluster(622, 36.84696, -1.68796) # Cluster 622
+move_cluster(117, 36.583524, -1.151523) # Cluster 117
+
+# Export
+st_write(clusters, "clusters/randomly_selected_clusters_buffered_allocated_to_groups_v3.shp", append = F)
+# Also export csv
+final_clusters_allocated_df <- data.frame(clusters)[,c("cluster_id", "group")]
+write.csv(final_clusters_allocated_df, "Data Exports/vcf_final_clusters_allocated.csv")
+final_clusters_allocated_df
 
 ```
 
