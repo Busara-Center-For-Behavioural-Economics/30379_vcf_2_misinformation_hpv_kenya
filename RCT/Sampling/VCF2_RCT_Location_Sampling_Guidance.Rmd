@@ -1,0 +1,224 @@
+---
+title: "VCF2_RCT_Location_Sampling_Guidance"
+author: "Jonathan Karl"
+date: "2023-10-11"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "sp", "googlesheets4","rgdal", "rgeos", "raster", "sf")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+
+# Planning Field Data Collection
+
+## 1. Making planning easier for SFOs (Sample Sizes by County and Subcounty) + FOs needed proportionately
+
+```{r}
+
+# Read in clusters
+selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
+
+# Read in county level geospatial data - subcounties
+Kenya_map_sub_counties <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_2.shp")
+
+# Intersect subcounty map with clusters
+intersection_subcounty_map_clusters <- st_intersection(Kenya_map_sub_counties, selected_clusters_buffered_allocated) 
+intersection_subcounty_map_clusters$area <- st_area(intersection_subcounty_map_clusters)
+
+# Compute Sample by County and Sub-County
+n_by_cluster_by_NAME_2 <- data.frame(intersection_subcounty_map_clusters) %>% 
+  group_by(cluster_id) %>% 
+  summarise(NAME_1, NAME_2, group, area, sum_area = sum(area), .groups = "drop") %>% 
+  mutate(share_area = as.numeric(area/sum_area)) %>% 
+  mutate(sample_size_baseline = as.numeric(ifelse(group %in% c("Offline_Only", "Online_Offline"), 143 * share_area, ifelse(group %in% c("Online_Only", "Control"), 121 * share_area, "OH_MY_GOD_WHAT_THE_HELL")))) %>% 
+  mutate(sample_size_endline = 85 * share_area)
+
+outside_study_area <- n_by_cluster_by_NAME_2 %>% 
+  filter(!(NAME_1 %in% c("Nairobi", "Machakos", "Kiambu", "Kajiado")))
+
+inside_study_area <- n_by_cluster_by_NAME_2 %>% 
+  filter(NAME_1 %in% c("Nairobi", "Machakos", "Kiambu", "Kajiado"))
+
+# Add the overhangs proportionately to the other NAME_2s
+for(i in 1:nrow(outside_study_area)){
+  
+  clus_id <- outside_study_area[i,]$cluster_id
+  
+  input_sample_size_overhangs <- unlist(outside_study_area[i,c("sample_size_baseline","sample_size_endline")])
+  weight_vector <- inside_study_area[inside_study_area$cluster_id == clus_id,]$share_area
+  
+  # Add baseline
+  baseline_additions <- input_sample_size_overhangs[1]*weight_vector/sum(weight_vector)
+  inside_study_area[inside_study_area$cluster_id == clus_id,"sample_size_baseline"] <- inside_study_area[inside_study_area$cluster_id == clus_id,"sample_size_baseline"] + baseline_additions
+  
+  # Add endline
+  endline_additions <- input_sample_size_overhangs[2]*weight_vector/sum(weight_vector)
+  inside_study_area[inside_study_area$cluster_id == clus_id,"sample_size_baseline"] <- inside_study_area[inside_study_area$cluster_id == clus_id,"sample_size_baseline"] + endline_additions
+
+}
+inside_study_area_final <- inside_study_area
+
+# Compute FOs needed 
+inside_study_area_final$fo_needed_baseline <- ((inside_study_area_final$sample_size_baseline/sum(inside_study_area_final$sample_size_baseline))*66)
+
+# Aggregate by NAME_1 and NAME_2
+inside_study_area_final <- inside_study_area_final %>% 
+  group_by(NAME_1, NAME_2) %>% 
+  summarise_at(c("sample_size_baseline", "sample_size_endline", "fo_needed_baseline"), sum) %>% 
+  mutate_at(c("sample_size_baseline", "sample_size_endline"), round)
+
+# Export to Gsheets
+range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
+            sheet = "FO Needs",
+            inside_study_area_final,
+            range = "A2",
+            reformat = F)
+
+```
+
+
+## 2. V2 Clusters - SFO responsibility
+
+```{r}
+
+################################### WHICH SFO IS RESPONSIBLE?
+
+# Read in clusters
+selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_v2.shp")
+
+# Read in county level geospatial data
+Kenya_map_county_level <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_1.shp")
+
+# Intersect County level map with clusters
+intersection_county_map_clusters <- st_intersection(Kenya_map_county_level, selected_clusters_buffered_allocated) 
+intersection_county_map_clusters$area <- st_area(intersection_county_map_clusters)
+
+# Compute the majority share by cluster and assign SFOs (highlight clusters that are heavily on the border where the majority is below < 75%)
+cluster_bycounty_share <- data.frame(intersection_county_map_clusters) %>% 
+  group_by(cluster_id) %>% 
+  summarise(NAME_1, share_cluster_area = as.numeric(area/sum(area))) %>% 
+  filter(NAME_1 %in% c("Nairobi", "Machakos", "Kajiado", "Kiambu")) %>% 
+  filter(share_cluster_area == max(share_cluster_area)) %>% 
+  arrange(NAME_1)
+
+fo_assigned_county <- c("Nairobi" = "Martin", "Machakos" = "Billy", "Kajiado" = "Dennis", "Kiambu" = "Naom")
+cluster_bycounty_share$sfo_responsible <- unname(fo_assigned_county[cluster_bycounty_share$NAME_1])
+
+# Format into percentages
+cluster_bycounty_share$share_cluster_area_percentage <- paste0(round(cluster_bycounty_share$share_cluster_area*100), "%")
+cluster_bycounty_share$share_cluster_area <- NULL
+
+
+
+################################# EXPORT TO GSHEETS
+
+# Merge Where are the Clusters & SFO responsible dfs
+export_df <- cluster_bycounty_share[,c("cluster_id", "NAME_1", "sfo_responsible")]
+
+# Re-Assign the clusters that were manually re-assigned
+export_df$sfo_responsible[export_df$cluster_id %in% c(39, 215)] <- "Dennis"
+export_df$NAME_1[export_df$cluster_id %in% c(39, 215)] <- "Kajiado"
+
+# Order properly
+export_df <- export_df %>% 
+  arrange(NAME_1)
+
+# Export to Gsheets
+range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
+            sheet = "[V2 - new] Cluster Data Collecton Issues",
+            range = "A2",
+            export_df, 
+            reformat = F,
+            col_names = F)
+
+```
+
+
+# [OLD - IGNORE]
+
+## 2. Export List of Cluster IDs and where they are (+ sample sizes) + SFO responsibility
+
+```{r}
+
+
+########################## WHERE ARE THE CLUSTERS? + SAMPLE SIZE TARGETS
+
+# Read in clusters
+selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
+
+# Read in county level geospatial data - wards
+Kenya_map_ward_level <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_3_urban_rural_classified.shp")
+
+# Intersect ward map with clusters
+intersection_ward_map_clusters <- st_intersection(Kenya_map_ward_level, selected_clusters_buffered_allocated) 
+intersection_ward_map_clusters$area <- st_area(intersection_ward_map_clusters)
+
+# Before computing areas with which the cluster overlaps and the group the cluster is allocated to prep the recruitment discrepancy in sample size for the clusters
+recruitment_baseline_samplesize_discrepancy <- c("Control" = 121, "Online_Only" = 121, "Offline_Only" = 143, "Online_Offline" = 143)
+
+intersection_ward_map_clusters_df <- data.frame(intersection_ward_map_clusters) %>% 
+  group_by(cluster_id) %>% 
+  summarise(group = unique(group), County = toString(unique(NAME_1)), Sub_County = toString(unique(NAME_2)), Ward = toString(unique(NAME_3))) %>%
+  ungroup() %>% 
+  mutate(sample_size_recruitment_baseline = unname(recruitment_baseline_samplesize_discrepancy[group])) %>% 
+  mutate(sample_size_endline = 85) %>% 
+  arrange(County, Sub_County)
+  
+################################### WHICH SFO IS RESPONSIBLE?
+
+# Read in clusters
+selected_clusters_buffered_allocated <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups.shp")
+
+# Read in county level geospatial data
+Kenya_map_county_level <- st_read("Raw Data/gadm41_KEN_shp/gadm41_KEN_1.shp")
+
+# Intersect County level map with clusters
+intersection_county_map_clusters <- st_intersection(Kenya_map_county_level, selected_clusters_buffered_allocated) 
+intersection_county_map_clusters$area <- st_area(intersection_county_map_clusters)
+
+# Compute the majority share by cluster and assign SFOs (highlight clusters that are heavily on the border where the majority is below < 75%)
+cluster_bycounty_share <- data.frame(intersection_county_map_clusters) %>% 
+  group_by(cluster_id) %>% 
+  summarise(NAME_1, share_cluster_area = as.numeric(area/sum(area))) %>% 
+  filter(NAME_1 %in% c("Nairobi", "Machakos", "Kajiado", "Kiambu")) %>% 
+  filter(share_cluster_area == max(share_cluster_area)) %>% 
+  arrange(NAME_1)
+
+fo_assigned_county <- c("Nairobi" = "Martin", "Machakos" = "Billy", "Kajiado" = "Dennis", "Kiambu" = "Naom")
+cluster_bycounty_share$sfo_responsible <- unname(fo_assigned_county[cluster_bycounty_share$NAME_1])
+
+# Format into percentages
+cluster_bycounty_share$share_cluster_area_percentage <- paste0(round(cluster_bycounty_share$share_cluster_area*100), "%")
+cluster_bycounty_share$share_cluster_area <- NULL
+
+
+
+################################# EXPORT TO GSHEETS
+
+# Merge Where are the Clusters & SFO responsible dfs
+export_df <- merge(cluster_bycounty_share[,c("cluster_id", "sfo_responsible")], intersection_ward_map_clusters_df, by = "cluster_id")
+
+
+# Export to Gsheets
+range_write("https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=360969076",
+            sheet = "[old] Clusters Locations, Sample Sizes & SFO Responsible",
+            export_df, 
+            reformat = F)
+
+```
