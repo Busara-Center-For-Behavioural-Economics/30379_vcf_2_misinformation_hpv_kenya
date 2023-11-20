@@ -1145,15 +1145,14 @@ average_output_and_currents_and_targets$n[is.na(average_output_and_currents_and_
 # Days left until 15th December
 days_left <- as.integer(as.Date("2023-12-15") - max(as.Date(baseline_data$submission_date_dateonly)))
 
-# Given average daily progress, and days left how many FOs need to work in which clusters to equalise sample size
+# Given average daily progress, and days left how many FOs need to work in which clusters to equalise sample size (assume we have 64 FOs per day....we had 66 but Ruth is being fired and on average 1 per day is sick)
 fo_days <- days_left*64
 
 # Initialise with uniform distribution of FO days
 average_output_and_currents_and_targets$outcome_n <- average_output_and_currents_and_targets$n + ((fo_days/nrow(average_output_and_currents_and_targets))*average_output_and_currents_and_targets$average_responses_by_cluster)
-
 average_output_and_currents_and_targets$fo_days_deployed <- fo_days/nrow(average_output_and_currents_and_targets)
 
-
+# This function amplifies the re-allocaction to be not linear but exponential, i.e. cluster most in need don't get proportionately more FO days but exponentially more
 amplify_and_normalize <- function(vec, power = 1) {
     # Apply a power transformation to each element
     amplified_vec <- vec ^ power
@@ -1164,6 +1163,7 @@ amplify_and_normalize <- function(vec, power = 1) {
     return(normalized_vec)
 }
 
+# This function is the actual optimiser that takes from surplus clusters and gives to lagging clusters
 optimize_towards_zero <- function(vec, limit_vec) {
     # Calculate the total amount available for redistribution (sum of the minimum of positive values and their limits)
     total_redistribution <- sum(pmin(vec[vec > 0], limit_vec[vec > 0]))
@@ -1185,6 +1185,7 @@ optimize_towards_zero <- function(vec, limit_vec) {
                 change_vector = change_vector))
 }
 
+# This function iterates this optimisation process
 iterative_optimizer <- function(data_input, initial_limit_vector, productivity_vector, max_iterations = 100, tolerance = 1e-6) {
   
     diff_outcome_target <- data_input$outcome_n - data_input$target_n
@@ -1230,20 +1231,20 @@ iterative_optimizer <- function(data_input, initial_limit_vector, productivity_v
 }
 
 
-
+# Execute the optimisation
 temp <- iterative_optimizer(data_input = average_output_and_currents_and_targets,
                             initial_limit_vector = average_output_and_currents_and_targets$fo_days_deployed,
                             productivity_vector = average_output_and_currents_and_targets$average_responses_by_cluster, 
                             max_iterations = 100, 
                             tolerance = 1e-180)
 
-
+# Add variables to overview data.frame to communicate to SFOs
 average_output_and_currents_and_targets$optimised_fo_days_deployed <- temp$final_fo_days_deployed
 average_output_and_currents_and_targets$optimised_outcome_n <- temp$final_outcome_n
 average_output_and_currents_and_targets$optimised_final_fo_days_over_under <- temp$final_fo_days_over_under
 average_output_and_currents_and_targets$predicted_percentage_target_completion <- average_output_and_currents_and_targets$optimised_outcome_n/average_output_and_currents_and_targets$target_n
 
-
+# Export to Googlesheets
 average_output_and_currents_and_targets %>% 
   dplyr::select(B0_cluster, average_responses_by_cluster_by_fo, group, target_n, n, optimised_fo_days_deployed,optimised_outcome_n, optimised_outcome_n) %>% 
   range_write(ss = "https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=824952358",
