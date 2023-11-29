@@ -520,3 +520,82 @@ final_clusters_allocated_df
 
 ```
 
+
+### 7.3 - V3
+
+```{r}
+
+# Read in shapefiles and population density csv
+additional_points <- st_read("clusters/additional_points.shp")
+clusters <- st_read("clusters/randomly_selected_clusters_buffered_allocated_to_groups_v3.shp")
+all_initial_potential_clusters <- st_read("clusters/points.shp")
+ken_general_2020_cropped <- read.csv("Raw Data/population_density_data/ken_general_2020_cropped.csv")
+# Convert to csv to sf object
+ken_general_2020_cropped_sf <- st_as_sf(ken_general_2020_cropped, coords = c("longitude", "latitude"), crs = 4326)
+
+# Read burned cluster_ids and add update the file based on the latest clusters
+burned_ids <- read.csv("clusters/burned_ids.csv")[,-1]
+burned_ids <- rbind(burned_ids, data.frame(cluster_id = clusters$cluster_id, group = clusters$group))
+burned_ids <- burned_ids[!duplicated(burned_ids),]
+
+
+# Set the radius in meters (1 mile = 1609.34 meters)
+radius_meters <- 1609.34
+
+############################## 1. Moving Clusters
+
+# Kiambu
+move_cluster(103, 36.634734, -0.969261) # Cluster 325
+move_cluster(444, 36.957456, -1.148411) # Cluster 444
+
+# Machakos
+move_cluster(192, 37.132402, -1.542821) # Cluster 192
+move_cluster(316, 37.274071, -1.229091) # Cluster 316
+
+# Nairobi
+move_cluster(110, 37.014059, -1.283610) # Cluster 110
+
+################################ 2. Sampling New Clusters
+
+# Import all eligible points
+all_current_potential_cluster_buffered <- st_read("clusters/points_and_additional_points.shp") 
+
+# Join clusters and population_points
+joined_data <- st_join(ken_general_2020_cropped_sf, all_current_potential_cluster_buffered, join = st_within)
+
+# Aggregate the sum of the population density for each polygon (cluster)
+aggregated_pop_cluster <- aggregate(joined_data$ken_general_2020, list(joined_data$cluster_id), sum)
+
+
+##################### Sample new ones for abandoned ones V2
+
+# Burned IDs --> Filter data for only eligible clusters to be re-sampled
+aggregated_pop_cluster_not_burned <- aggregated_pop_cluster[!(aggregated_pop_cluster$Group.1 %in% burned_ids),]
+
+# Abandon the following clusters --> Machakos: 186, 414, 141 / Nairobi: 10, 363
+cluster_ids_remove <- c(378, 54)
+selected_cluster_ids <- c(180, 261)
+
+# Now, replace the ID and geography of the 5 clusters that are to be removed in the "clusters" object with the new ones
+cluster_idx_replace <- which(clusters$cluster_id %in% cluster_ids_remove)
+
+# Extract polygons of new clusterIDs
+selected_clusters_new <- all_current_potential_cluster_buffered[all_current_potential_cluster_buffered$cluster_id %in% selected_cluster_ids,]
+
+# Re-Assign the cluster IDs and Geographies
+clusters[cluster_idx_replace,]$cluster_id <- selected_clusters_new$cluster_id
+clusters[cluster_idx_replace,]$geometry <- selected_clusters_new$geometry
+
+# Slightly adjust the new clusters 
+move_cluster(180, 37.689700, -1.408045) # Cluster 180
+move_cluster(261, 36.951790, -1.112885) # Cluster 261
+
+# Export
+st_write(clusters, "clusters/randomly_selected_clusters_buffered_allocated_to_groups_v4.shp", append = F)
+# Also export csv
+final_clusters_allocated_df <- data.frame(clusters)[,c("cluster_id", "group")]
+write.csv(final_clusters_allocated_df, "Data Exports/vcf_final_clusters_allocated.csv")
+final_clusters_allocated_df
+
+```
+
