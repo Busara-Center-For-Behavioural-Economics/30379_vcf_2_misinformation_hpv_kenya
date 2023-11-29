@@ -5,14 +5,10 @@ date: '2023-09-13'
 output: html_document
 ---
 
-THINGS TO DO:
-- filter by consent after you figure out refusal rates and their discrepancies
-- clean the randomised questions and add them to the "arbitrary responses" bit
-
 # Setup
 
 ```{r}
-#rm(list = ls())
+rm(list = ls())
 
 # Prevent scientific notation
 knitr::opts_knit$set(options(scipen=999))
@@ -103,6 +99,13 @@ baseline_data <- baseline_data %>% filter(B0_cluster != 37)
 
 # Abandon Machakos: 186, 414, 141 / Nairobi: 10, 363
 
+# REMOVE ONE EACH
+# Remove one response of Sahara Mohammed and Catherine Njuguna both recruited Josephine Achieng in cluster 50 in Nairobi (not on the same day)
+# Alice Mwende Muema and Emmanuel Simiyu both recruited someone with the same number in cluster 283 in Nairobi.........on the same day....but the name is different
+# Amos Osumo and Shanice Linah Adhiambo both recruited Maria Sianda in cluster 305 (nairobi). Amos on the 28th of Oct. and Shanice on the 20th of Nov.
+
+
+
 ```
 
 ## Clean the randomised questions
@@ -169,6 +172,8 @@ baseline_data[old_manipulation_var_names] <- NULL
 
 # Shanice, 16th Nov, all labelled as 444, but where in 239
 
+# 20th Nov, Shanice Linah accidentally keyed in Kiambu as a location instead of Nairobi to the respondent named Lucy Nyamoita
+
 ```
 
 
@@ -188,7 +193,7 @@ tblFun(baseline_data$formdef_version)
 # Who used the wrong survey?
 baseline_data %>% 
   group_by(en_name, formdef_version) %>% 
-  filter(submission_date_dateonly > as_date("2023-11-10")) %>%
+  filter(submission_date_dateonly > as_date("2023-11-17")) %>%
   summarise(n()) %>% 
   arrange(en_name)
 
@@ -255,16 +260,21 @@ baseline_data[eligible,][baseline_data[eligible,]$B11_phonenumber_check == 0,]$n
 # Check this by FO
 baseline_data %>% 
   group_by(en_name, submission_date_dateonly) %>% 
+  filter(submission_date_dateonly > as_date("2023-11-17")) %>%
   filter(!is.na(no_number_but_mobile)) %>% 
   summarise(no_number_but_mobile = n()) %>% 
   arrange(desc(no_number_but_mobile))
 
 
 ############## Any directions judged as insufficient if there is no phone number?
-(no_phone_number_direction_manual_check <- baseline_data[eligible,]$B14_hairdresserlocation[baseline_data[eligible,]$B11_phonenumber_check == 0])
+no_phone_number_direction_manual_check <- baseline_data[eligible,]$B14_hairdresserlocation[baseline_data[eligible,]$B11_phonenumber_check == 0]
+
+no_phone_number_direction_manual_check[1:1000]
+no_phone_number_direction_manual_check[1001:length(no_phone_number_direction_manual_check)]
+
 baseline_data$insufficient_info_hairdresser <- NA
 insufficient_info_hairdresser_idx <- rep(NA, length(no_phone_number_direction_manual_check))
-which_idx_are_insufficient <- c(6,9, 18, 133, 135, 220, 222, 365, 395, 450, 456, 457, 591)
+which_idx_are_insufficient <- c(6,9, 18, 133, 135, 220, 222, 365, 395, 450, 456, 457, 579, 591)
 insufficient_info_hairdresser_idx[which_idx_are_insufficient] <- "insufficient"
 
 baseline_data[eligible,][baseline_data[eligible,]$B11_phonenumber_check == 0,]$insufficient_info_hairdresser <- insufficient_info_hairdresser_idx
@@ -297,7 +307,7 @@ baseline_data %>%
   filter(eligible & B11_phonenumber_check == 0) %>% 
   add_column(flagged_JSK) %>% 
   filter(flagged_JSK == "Red Flag") %>% 
-  filter(submission_date_dateonly >= "2023-11-01") %>% 
+  filter(submission_date_dateonly >= "2023-11-17") %>% 
   group_by(en_name, submission_date_dateonly) %>% 
   summarise(n = n()) %>% 
   arrange(desc(n))
@@ -679,7 +689,7 @@ head(sort(apply(baseline_data, FUN = function(x) mean(x %in% 99), MARGIN = 2), d
 
 (icc <- clus.rho(popchar = baseline_data$truth_discernment_1[baseline_data$truth_discernment_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$truth_discernment_1 != 88]))
 
-#(icc <- clus.rho(popchar = baseline_data$vax[baseline_data$vax_beh_int_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$vax_beh_int_1 != 88]))
+(icc <- clus.rho(popchar = baseline_data$vax_beh_int_1_1[baseline_data$vax_beh_int_1_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$vax_beh_int_1_1 != 88]))
 
 # Predicted
 wp.crt2arm(n = 85/2, J = 108/2, icc = ifelse(icc$icc[1] < 0,0,icc$icc[1]), alpha = 0.05, power = 0.8)
@@ -712,7 +722,6 @@ sum(duplicated(baseline_data)) == 0
 # Name
 duplicate_names <- baseline_data$B1_name[duplicated(tolower(baseline_data[,c("B1_name")]))]
 temp_df <- baseline_data[baseline_data$B1_name %in% duplicate_names,c("starttime", "en_name", "B1_name", "B0_cluster", "county_name", "B7_phonenumber")] %>% 
-  filter(starttime > as_date("2023-11-06")) %>% 
   arrange(B1_name, en_name)
 temp_df
 
@@ -721,7 +730,7 @@ temp_df
 baseline_data[duplicated(baseline_data[,c("B7_phonenumber")]),c("B1_name", "B7_phonenumber")]
 duplicate_phonenumber <- baseline_data$B7_phonenumber[duplicated(baseline_data[,c("B7_phonenumber")])]
 temp_df <- baseline_data[baseline_data$B7_phonenumber %in% duplicate_phonenumber,c("starttime", "en_name", "B1_name", "B0_cluster", "county_name", "B7_phonenumber", "final_ID")] %>% 
-  arrange(B1_name)
+  arrange(B7_phonenumber)
 temp_df
 
 ```
@@ -780,12 +789,14 @@ which_groups_by_respondent_only_1_response <- apply(distinct_q_groups_df, MARGIN
 
 # Print a dataframe showing each respondent (name, email), the number of groups (and share they answered with only one response) and the groups as a combined string
 arbitrary_responses_df <- data.frame(B1_name = baseline_data$B1_name, 
-           en_name = baseline_data$en_name, 
-           B0_cluster = baseline_data$B0_cluster,
-           county_name = baseline_data$county_name,
-           groups_single_resp = sapply(which_groups_by_respondent_only_1_response, paste, collapse = ", "), 
-           number_groups_single_resp = sapply(which_groups_by_respondent_only_1_response, length), 
-           share_groups_single_resp = share_groups_by_respondent_only_1_response) %>% 
+                                     final_ID = baseline_data$final_ID,
+                                     endtime = baseline_data$endtime,
+                                     en_name = baseline_data$en_name, 
+                                     B0_cluster = baseline_data$B0_cluster,
+                                     county_name = baseline_data$county_name,
+                                     groups_single_resp = sapply(which_groups_by_respondent_only_1_response, paste, collapse = ", "), 
+                                     number_groups_single_resp = sapply(which_groups_by_respondent_only_1_response, length), 
+                                     share_groups_single_resp = share_groups_by_respondent_only_1_response) %>%
   arrange(desc(share_groups_single_resp))
 
 arbitrary_responses_df$groups_single_resp[arbitrary_responses_df$groups_single_resp == ""] <- "No_Single_Resp_Group"
@@ -936,8 +947,18 @@ omondi_dennis_no_gap <- c("105141Nov7143707", "36112Nov7154916")
 beverlyne_weird_overlap <- c("102186Nov11113950", "66187Nov11114642")
 ruth_kilobi_suspected_fraud <- c("70153Oct26141922", "91169Oct26085723", "104114Oct26105339", "74166Nov11095437", "105101Nov15104428")
 evant_otieno_additional <- c("109125Nov14101254", "85166Nov14141234", "94168Nov11110919")
+ruth_kilobi_additonal <- c("27167Nov6110908", "88103Nov9095426", "59110Nov11114302", "18143Nov13120236", "29113Nov14140631", "23135Nov14104347")
+lydia_additional <- c("42181Nov10101217", "27198Nov10135453", "47194Nov14091248", "67192Nov15085631", "67135Nov15115629")
+sarah_magada_double_phonenumber <- c("73137Nov15121714", "52200Nov18134536")
+jones_kipsang_arbitrary <- c("42104Oct28102106", "21118Nov20122945")
+kennedy_kibor_no_gap <- c("68146Nov17095241", "16187Nov17103553")
+peninah_mwongeli_kioko_no_gap <- c("93127Nov18085704", "37196Nov18100158")
+mirriam_mukosi_additional <- c("30159Nov15124708", "21171Nov21110251", "86121Nov22144655", "62188Nov24120954")
+irene_omondi_additional <- c("50137Nov15131224", "20147Nov17174035", "69103Nov21092339", "20191Nov23100429")
+wasike_mahmoud_additional <- c("83126Nov15133300", "68144Nov18134828", "102168Nov24085714", "67159Nov22115501")
+catherine_njuguna_additional <- c("13102Nov13141723", "52169Nov17150050", "89196Nov20152652", "38120Nov23175924")
 
-manual_audio_audits <- unique(c(ids_cluster207_dense, benjamin_thoge, sarah_madaga_personal_request, eric_obose_random_set, ruth_ndungu_too_quick, omolo_no_gap_between_responses, evans_otieno_too_quick, howard_too_quick, omondi_dennis_no_gap, beverlyne_weird_overlap, ruth_kilobi_suspected_fraud, evant_otieno_additional))
+manual_audio_audits <- unique(c(ids_cluster207_dense, benjamin_thoge, sarah_madaga_personal_request, eric_obose_random_set, ruth_ndungu_too_quick, omolo_no_gap_between_responses, evans_otieno_too_quick, howard_too_quick, omondi_dennis_no_gap, beverlyne_weird_overlap, ruth_kilobi_suspected_fraud, evant_otieno_additional, ruth_kilobi_additonal, lydia_additional, sarah_magada_double_phonenumber, jones_kipsang_arbitrary, kennedy_kibor_no_gap, peninah_mwongeli_kioko_no_gap, mirriam_mukosi_additional, irene_omondi_additional, wasike_mahmoud_additional, catherine_njuguna_additional))
 
 temp_df2 <- baseline_data %>% 
   filter(final_ID %in% manual_audio_audits) %>%
@@ -962,7 +983,9 @@ ruth_ndungu_additional <- c("24189Oct28104720", "105184Oct28112034", "92136Oct28
 duplicate_phonenumber_different_name <- c("37128Nov10152101")
 ruth_kilobi <- c("104196Oct26115513")
 evans_otieno <- c("78146Nov10131856", "102146Nov10100301")
-manual_backchecks <- unique(c(benjamin_thoge, ruth_ndungu_too_quick, ruth_ndungu_additional, duplicate_phonenumber_different_name, ruth_kilobi, evans_otieno))
+samson_gwada_super_short <- c("26159Nov17143958", "75144Nov17141622")
+
+manual_backchecks <- unique(c(benjamin_thoge, ruth_ndungu_too_quick, ruth_ndungu_additional, duplicate_phonenumber_different_name, ruth_kilobi, evans_otieno, samson_gwada_super_short))
 
 
 baseline_data %>% 
@@ -1248,10 +1271,11 @@ average_output_and_currents_and_targets$predicted_percentage_target_completion <
 average_output_and_currents_and_targets %>% 
   dplyr::select(B0_cluster, average_responses_by_cluster_by_fo, group, target_n, n, optimised_fo_days_deployed,optimised_outcome_n, optimised_outcome_n) %>% 
   range_write(ss = "https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=824952358",
-              sheet = "Optimising FO Allocation",
+              sheet = "[V3 - new] Optimising FO Allocation",
               range = "A2",
               col_names = F,
               reformat = F)
+
 ```
 
 
@@ -1282,7 +1306,7 @@ survey_locations %>%
 
 # Summary Stats on Duration in Minutes 
 temp_df <- baseline_data %>% 
-  filter(submission_date_dateonly >= as_date("2023-11-06")) %>% 
+  filter(submission_date_dateonly >= as_date("2023-11-16")) %>% 
   group_by(en_name) %>% 
   summarise(duration_mean = round(mean(duration/60)), 
             duration_median = round(median(duration/60)),
@@ -1327,7 +1351,7 @@ results <- baseline_data %>%
 
 # View the results
 results %>% 
-  filter(day >= as_date("2023-11-06")) %>% 
+  filter(day >= as_date("2023-11-16")) %>% 
   arrange(desc(count))
 
 
@@ -1346,7 +1370,8 @@ temp_df
 ```{r}
 
 # How often does this happen per FO
-arbitrary_responses_df %>% 
+arbitrary_responses_df %>%
+  filter(baseline_data$submission_date_dateonly >= "2023-11-17") %>% 
   group_by(en_name) %>% 
   summarise(mean_number_groups_single_response = mean(number_groups_single_resp),
           mean_share_groups_single_response = mean(share_groups_single_resp)) %>% 
@@ -1381,19 +1406,19 @@ temp_df
 temp_df <- cbind(en_name = baseline_data$en_name, data.frame(baseline_data[,!colnames(baseline_data) %in% c("en_name")] == 88))
 temp_df$row_sum <- rowSums(temp_df[,-1], na.rm = T)
 temp_df %>% 
-  filter(baseline_data$submission_date_dateonly >= as_date("2023-11-06")) %>% 
+  filter(baseline_data$submission_date_dateonly >= as_date("2023-11-16")) %>% 
   group_by(en_name) %>% 
   summarise(n(), dont_know_sum = sum(row_sum), dont_know_mean = mean(row_sum), dont_know_max =max(row_sum)) %>% 
-  arrange(desc(dont_know_sum))
+  arrange(desc(dont_know_mean))
 
 # Refuse to answer patterns by FO
 temp_df <- cbind(en_name = baseline_data$en_name, data.frame(baseline_data[,!colnames(baseline_data) %in% c("en_name")] == 99))
 temp_df$row_sum <- rowSums(temp_df[,-1], na.rm = T)
 temp_df %>% 
-  filter(baseline_data$submission_date_dateonly >= as_date("2023-11-06")) %>% 
+  filter(baseline_data$submission_date_dateonly >= as_date("2023-11-16")) %>% 
   group_by(en_name) %>% 
   summarise(n(), refuse_sum = sum(row_sum), refuse_mean = mean(row_sum), refuse_max = max(row_sum)) %>% 
-  arrange(desc(refuse_sum))
+  arrange(desc(refuse_mean))
 
 
 # Remove clutter
