@@ -1,0 +1,192 @@
+---
+title: "Hairdresser_Matching"
+author: "Jonathan Karl"
+date: "2024-01-02"
+output: html_document
+---
+
+# Setup
+
+```{r}
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "lubridate", "stringdist")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+# Read the data
+
+```{r}
+baseline_data <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+```
+
+# Playground
+
+- Plan for tracking match between hairdresser<>participant (also export to Gsheets so that Isaac can mark which participant whose hairdresser rejected has been informed)
+- By FO --> Match with Hairdressers (who is (not) ineligible). What is the rate of ineligibility?
+
+```{r}
+
+temp_data <- baseline_data %>% 
+  filter(cluster_treatment_group %in% c("Online_Offline", "Offline_Only"))
+
+temp_data1 <- baseline_data %>% 
+  filter(!(cluster_treatment_group %in% c("Online_Offline", "Offline_Only")))
+
+phonenumbers_correct_group <- unique(temp_data$B11a_phonenumber)
+
+mean(table(temp_data$B11a_phonenumber))
+mean(table(temp_data1$B11a_phonenumber))
+
+sort(table(temp_data$B11a_phonenumber), decreasing = T)
+sort(table(temp_data1$B11a_phonenumber), decreasing = T)
+
+mean(temp_data1$B11a_phonenumber %in% phonenumbers_correct_group)
+
+temp_data[temp_data$B11a_phonenumber == "700000000" & !is.na(temp_data$B11a_phonenumber),] %>% 
+  dplyr::select(SubmissionDate, starttime, endtime, en_name, B11a_phonenumber, B13_hairdressername, B14_hairdresserlocation) %>%
+  write.csv(temp, "70000_phonenumbers_hairdresser_detail_check.csv")
+
+
+temp <- table(temp_data$B11a_phonenumber) > 1
+names(temp[temp])
+
+
+# Which hairdressers were named across treatment groups>
+cross_group_hairdressers_phone_numbers <- baseline_data %>% 
+  group_by(B11a_phonenumber, cluster_treatment_group) %>% 
+  summarise(n = n(), .groups = "drop_last") %>% summarise(n = n()) %>% 
+  filter(n > 1) %>% drop_na() %>% pull(B11a_phonenumber)
+
+baseline_data %>% 
+  filter(B11a_phonenumber %in% cross_group_hairdressers_phone_numbers) %>% 
+  group_by(B11a_phonenumber, cluster_treatment_group) %>% 
+  summarise(n = n()) %>% 
+  mutate(majority = max(n)) %>% mutate(majority = (n == majority) & sum(n %in% majority) == 1)
+  
+```
+
+# Secondary Phone Number Unification
+--> Ensuring every unique secondary phone number is matched to only 1 primary phone number
+
+```{r}
+
+
+# Which primary phone numbers appear more than once
+primary_phoneno_freq <- table(baseline_data$B11a_phonenumber) > 1
+multi_phoneno <- as.numeric(names(primary_phoneno_freq[primary_phoneno_freq]))
+count <- 1
+
+# TAKING THE ALTERNATIVE PHONE NUMBER OUT OF THE GAME
+for(i in unique(baseline_data$B11a_phonenumber[baseline_data$B11a_phonenumber %in% multi_phoneno])){
+  
+  if(all(is.na(baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)]))){
+    next
+  }
+  
+  if(length(unique(baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i])) > 1) {
+    print(paste0("Count: ",count, " ----- Primary: ", i," Discrepancy: ", paste(baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")))
+    
+    x <- baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)]
+    for(i in unique(x[!is.na(x)])){
+      alternative_phonenumber_somewhereelse <- sum(baseline_data$B12a_alternativepn == i, na.rm = T) != sum(x[!is.na(x)] == i)
+      if(alternative_phonenumber_somewhereelse){
+        
+        unique(baseline_data$B11a_phonenumber[which(baseline_data$B12a_alternativepn == i)])
+        
+        print(paste(i, "ALSO FOUND SOMEWHERE ELSE --- ", paste0(unique(baseline_data$B11a_phonenumber[which(baseline_data$B12a_alternativepn == i)]), collapse = ", ")))}
+    }
+  
+    } else {
+    print(paste0("Count: ",count, "<>: ", baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i]))
+    }
+  count <- count+1
+}
+
+# Adjust alternative phone numbers
+
+# This one was just a typo. It was supposed to be 769145547 but the FO typed 769145541
+baseline_data$B11a_phonenumber[baseline_data$B11a_phonenumber == "769145541" & !is.na(baseline_data$B11a_phonenumber)] <- 769145547
+
+# This hairdresser appears to have 3 phone numbers. This is unified to enable easier matching where the first phone number is unified. (The third number is added to the location to retain the information)
+baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == "725524368" & !is.na(baseline_data$B11a_phonenumber)] <- paste0(baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == "725524368" & !is.na(baseline_data$B11a_phonenumber)], " --------- additional phonenumber: 725524368")
+baseline_data$B11a_phonenumber[baseline_data$B11a_phonenumber == "725524368" & !is.na(baseline_data$B11a_phonenumber)] <- 705764995
+
+```
+
+# Figuring out if there was maybe a few phone numbers with typos
+
+```{r}
+
+primary_phone_numbers <- baseline_data$B11a_phonenumber[!is.na(baseline_data$B11a_phonenumber)]
+unique_primary_phone_numbers <- unique(baseline_data$B11a_phonenumber[!is.na(baseline_data$B11a_phonenumber)])
+count <- 1
+suspected_typos_df <- data.frame()
+
+for(i in unique_primary_phone_numbers){
+  lv_dist <- stringdist(i, unique_primary_phone_numbers, method = 'lv')
+  
+  if(sum(lv_dist < 3 & lv_dist > 0) > 0){
+    
+    # Collect Data on the Source
+    freq_source <- sum(i == primary_phone_numbers)
+    hairdresser_name_source <- paste(baseline_data$B13_hairdressername[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+    hairdresser_nickname_source <- paste(baseline_data$B13_hairdresser_nickname[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+    hairdresser_location <- paste(baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = "\n")
+    
+    # Collect Data on the Proximal Phone Numbers
+    phone_numbers_proximity <- lv_dist[lv_dist < 3 & lv_dist > 0]
+    proximal_phone_numbers <- unique_primary_phone_numbers[lv_dist < 3 & lv_dist > 0]
+    freq_proximal <- table(primary_phone_numbers[primary_phone_numbers %in% proximal_phone_numbers])
+    freq_proximal <- freq_proximal[match(proximal_phone_numbers, names(freq_proximal))]
+    
+    #print(paste0("Count (", count, ") -- Source (n=",freq_source,"): ", i, " ----Proximal Phone Number: ", paste0(names(freq_proximal), " (n=", freq_proximal, "): Distance", "(", phone_numbers_proximity, ")", collapse = " || ")))
+    count <- count + 1
+    
+    count_2 <- 1
+    for(j in proximal_phone_numbers){
+      hairdresser_name_proximal <- paste(baseline_data$B13_hairdressername[baseline_data$B11a_phonenumber == j & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+      hairdresser_nickname_proximal <- paste(baseline_data$B13_hairdresser_nickname[baseline_data$B11a_phonenumber == j & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+      hairdresser_location_proximal <- paste(baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == j & !is.na(baseline_data$B11a_phonenumber)], collapse = "\n")
+      
+      # Compile a new row to add to the dataframe to aid identification of typos
+      temp_data1 <- data.frame(Source_Phonenumber = i,
+                               Source_Information = paste0("N = ",freq_source, "\n",
+                                                           "Hairdresser Name: ", paste0(hairdresser_name_source, collapse = ", "), "\n",
+                                                           "Hairdresser Nickname: ", paste0(hairdresser_nickname_source, collapse = ", "), "\n",
+                                                           "\nHairdresser Location:\n", paste0(hairdresser_location, collapse = "\n")),
+                             Proximal_Phonenumber = proximal_phone_numbers[count_2], 
+                             Proximal_Information = paste0("N = ", freq_proximal[count_2], "\n",
+                                                           "Proximity: ", phone_numbers_proximity[count_2], "\n",
+                                                           "Hairdresser Name: ", paste0(hairdresser_name_proximal, collapse = ", "), "\n",
+                                                           "Hairdresser Nickname: ", paste0(hairdresser_nickname_proximal, collapse = ", "), "\n",
+                                                           "\nHairdresser Location:\n", paste0(hairdresser_location_proximal, collapse = "\n")))
+      
+      suspected_typos_df <- rbind(suspected_typos_df, temp_data1)
+      
+      count_2 <- count_2 + 1
+    }
+  }
+}
+
+range_write(suspected_typos_df, 
+            ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=1106637800",
+            sheet = "Detecting Phone Number Typos",
+            range = "A2",
+            col_names = F,
+            reformat = F)
+
+```
+
