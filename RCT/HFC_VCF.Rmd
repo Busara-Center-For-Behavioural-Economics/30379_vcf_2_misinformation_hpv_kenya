@@ -93,19 +93,22 @@ baseline_data <- baseline_data %>% filter(SubmissionDate > as_datetime("2023-10-
 # Filter all cluster 271 responses before 8th November (we are moving this cluster far)
 baseline_data <- baseline_data %>% filter(!(SubmissionDate < as_datetime("2023-11-08 00:00:00") & B0_cluster == 271))
 
-# Abandon 197 and 37
+# Abandon Clusters
 baseline_data <- baseline_data %>% filter(B0_cluster != 197)
 baseline_data <- baseline_data %>% filter(B0_cluster != 37)
-
-# Abandon Machakos: 186, 414, 141 / Nairobi: 10, 363
+baseline_data <- baseline_data %>% filter(B0_cluster != 186)
+baseline_data <- baseline_data %>% filter(B0_cluster != 414)
+baseline_data <- baseline_data %>% filter(B0_cluster != 141)
+baseline_data <- baseline_data %>% filter(B0_cluster != 10)
+baseline_data <- baseline_data %>% filter(B0_cluster != 363)
+baseline_data <- baseline_data %>% filter(B0_cluster != 54)
+baseline_data <- baseline_data %>% filter(B0_cluster != 378)
+baseline_data <- baseline_data %>% filter(B0_cluster != 248)
 
 # REMOVE ONE EACH
 # Remove one response of Sahara Mohammed and Catherine Njuguna both recruited Josephine Achieng in cluster 50 in Nairobi (not on the same day)
 # Alice Mwende Muema and Emmanuel Simiyu both recruited someone with the same number in cluster 283 in Nairobi.........on the same day....but the name is different
 # Amos Osumo and Shanice Linah Adhiambo both recruited Maria Sianda in cluster 305 (nairobi). Amos on the 28th of Oct. and Shanice on the 20th of Nov.
-
-
-
 ```
 
 ## Clean the randomised questions
@@ -166,13 +169,65 @@ baseline_data[old_manipulation_var_names] <- NULL
 
 ## Manually edit data
 
+### Mislabelled Clusters
+
 ```{r}
 
-# Shanice Linah has shared a contact from cluster 375, respondent Nancy njoki whose hairdresser is known as Wasam 0725031780
 
-# Shanice, 16th Nov, all labelled as 444, but where in 239
+baseline_data[baseline_data$final_ID %in% c("98197Dec9171002", "76186Dec9123254", "77103Dec9105523", "84166Dec9134533", "13193Dec9154005", "44173Dec9144909", "20185Dec8174959", "77181Dec8164121", "38171Dec8154903", "42152Dec8133125", "44147Dec8114606", "39177Dec9113313"), ]$B0_cluster <- 428
+
+baseline_data[baseline_data$final_ID %in% c("29187Nov29101906"), ]$B0_cluster  <- 128
+
+baseline_data[baseline_data$final_ID %in% c("63200Oct30121711", "29166Nov3090457", "69154Oct30154755"), ]$B0_cluster <- 230
+
+baseline_data[baseline_data$final_ID %in% c("66183Nov8160224"), ]$B0_cluster <-280
+
+baseline_data[baseline_data$final_ID %in% c("63130Nov24165008"), ]$B0_cluster <- 364
+
+baseline_data[baseline_data$final_ID %in% c("77166Dec7104701"), ]$B0_cluster <- 103
+
+baseline_data[baseline_data$final_ID %in% c("102177Oct28132949", "70115Oct28164915"), ]$B0_cluster <- 318
+
+baseline_data[baseline_data$final_ID %in% c("74106Dec13163729"), ]$B0_cluster <- 318
+
+baseline_data[baseline_data$final_ID %in% c("20162Oct24145318"), ]$B0_cluster <- 207
+
+baseline_data[baseline_data$final_ID %in% c("84165Nov23100932"), ]$B0_cluster <- 403
+
+baseline_data[baseline_data$final_ID %in% c("72127Oct26150254", "89150Oct26160443"), ]$B0_cluster <- 215
+
+baseline_data[baseline_data$final_ID %in% c("81161Nov16102342", "52162Nov16113233", "22111Nov16130039", "59133Nov16141055"), ]$B0_cluster <- 239
+
+baseline_data[baseline_data$final_ID %in% c("28141Nov16130304", "104102Nov18143305", "63125Nov18155500", "35187Nov18165511", "27131Nov16101344", "15134Nov16170730"), ]$B0_cluster <- 218
+
+baseline_data[baseline_data$final_ID %in% c("61139Nov23144905"), ]$B0_cluster <- 282
+
+baseline_data[baseline_data$final_ID %in% c("67105Dec15104756"), ]$B0_cluster <- 97
+
+baseline_data[baseline_data$final_ID %in% c("64199Nov1141133"), ]$B0_cluster <- 97
+
+
+#c("39177Dec9113313") %in% baseline_data$final_ID
+```
+
+### Remove Fradulent Data
+
+```{r}
+table(baseline_data[baseline_data$en_name == "Ruth Wanjiru Ndungu",]$B0_cluster)
+
+baseline_data %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) %>% 
+  arrange(B0_cluster)
+```
+
+### Manually adjust FO mistakes
+
+```{r}
 
 # 20th Nov, Shanice Linah accidentally keyed in Kiambu as a location instead of Nairobi to the respondent named Lucy Nyamoita
+baseline_data[baseline_data$final_ID %in% c("24170Nov20092513"), ]$county_name <- "Nairobi"
+baseline_data[baseline_data$final_ID %in% c("24170Nov20092513"), ]$county_name_fo_location <- "Nairobi"
 
 ```
 
@@ -193,12 +248,13 @@ tblFun(baseline_data$formdef_version)
 # Who used the wrong survey?
 baseline_data %>% 
   group_by(en_name, formdef_version) %>% 
-  filter(submission_date_dateonly > as_date("2023-11-17")) %>%
+  filter(submission_date_dateonly > as_date("2023-11-25")) %>%
   summarise(n()) %>% 
   arrange(en_name)
 
 # From the 16th onwards everyone has to use the version 2311151046
 # From the 17th onwards everyone has to use the version 2311161331
+# From the 25th onwards everyone has to use the version 2311251219
 
 # Filter out wrong versions
 baseline_data <- baseline_data %>% 
@@ -260,7 +316,7 @@ baseline_data[eligible,][baseline_data[eligible,]$B11_phonenumber_check == 0,]$n
 # Check this by FO
 baseline_data %>% 
   group_by(en_name, submission_date_dateonly) %>% 
-  filter(submission_date_dateonly > as_date("2023-11-17")) %>%
+  filter(submission_date_dateonly > as_date("2023-11-23")) %>%
   filter(!is.na(no_number_but_mobile)) %>% 
   summarise(no_number_but_mobile = n()) %>% 
   arrange(desc(no_number_but_mobile))
@@ -268,9 +324,6 @@ baseline_data %>%
 
 ############## Any directions judged as insufficient if there is no phone number?
 no_phone_number_direction_manual_check <- baseline_data[eligible,]$B14_hairdresserlocation[baseline_data[eligible,]$B11_phonenumber_check == 0]
-
-no_phone_number_direction_manual_check[1:1000]
-no_phone_number_direction_manual_check[1001:length(no_phone_number_direction_manual_check)]
 
 baseline_data$insufficient_info_hairdresser <- NA
 insufficient_info_hairdresser_idx <- rep(NA, length(no_phone_number_direction_manual_check))
@@ -295,22 +348,88 @@ sfo_manual_hairdresser_direction_check <- baseline_data %>%
   dplyr::select(final_ID, en_name, B0_cluster, B7_phonenumber, B1_name, B13_hairdressername, B14_hairdresserlocation) %>% 
   add_column(flagged_JSK)
 
-range_write(sfo_manual_hairdresser_direction_check,
-            ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0",
-            sheet = "Enough Info to Recruit?", 
-            range = "A2",
-            reformat = F, col_names = F)
 
+############################ Upload new response
+
+hairdresser_redflag_tracker <- read_sheet("https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0")
+
+additional_rows <- sfo_manual_hairdresser_direction_check %>% 
+  filter(!(final_ID %in% hairdresser_redflag_tracker$final_ID))
+
+range_write(additional_rows, 
+            ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0",
+            sheet = "Enough Info to Recruit?",
+            range = paste0("A",nrow(hairdresser_redflag_tracker)+2),
+            col_names = F,
+            reformat = F)
 
 # Who messed up?
 baseline_data %>% 
   filter(eligible & B11_phonenumber_check == 0) %>% 
   add_column(flagged_JSK) %>% 
   filter(flagged_JSK == "Red Flag") %>% 
-  filter(submission_date_dateonly >= "2023-11-17") %>% 
+  filter(submission_date_dateonly >= "2023-11-23") %>% 
   group_by(en_name, submission_date_dateonly) %>% 
   summarise(n = n()) %>% 
   arrange(desc(n))
+
+```
+### 1.2.1.1 Update new Hairdresser Information
+
+```{r}
+
+# Read sheet with updated information
+hairdresser_additional_info <- read_sheet("https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", sheet = "Enough Info to Recruit?")
+
+# Which columns are to be updated
+update_columns <- c("Hairdresser Phone Number", "More detailed Name", "More detailed Nickname", "More detailed Directions")
+
+# Which rows contain additional information
+additional_info_idx <- rowSums(is.na(hairdresser_additional_info[,update_columns])) != ncol(hairdresser_additional_info[,update_columns])
+
+# Update the information
+for(i in hairdresser_additional_info[additional_info_idx,]$final_ID){
+  
+  # Update Phone Number
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`Hairdresser Phone Number`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B11a_phonenumber <- hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`Hairdresser Phone Number`
+    
+  } else {
+    next
+  }
+  
+  # Update Name
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Name`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B13_hairdressername <- paste(baseline_data[baseline_data$final_ID == i,]$B13_hairdressername,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Name`)
+    
+  } else {
+    next
+  }
+  
+  # Update Nickname
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Nickname`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B13_hairdresser_nickname <- paste(baseline_data[baseline_data$final_ID == i,]$B13_hairdresser_nickname,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Nickname`)
+    
+  } else {
+    next
+  }
+  
+  # Update Location
+  baseline_data[baseline_data$final_ID == i,]$B14_hairdresserlocation <- paste(baseline_data[baseline_data$final_ID == i,]$B14_hairdresserlocation,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Directions`)
+  
+}
+
+
+unlist(str_extract_all(baseline_data$B11a_phonenumber, "NA -------------------- Additional Information: [0-9]*"))
 
 ```
 
@@ -323,7 +442,6 @@ baseline_data %>%
 baseline_data <- baseline_data[eligible,] 
 
 ```
-
 
 
 ## 1.3 Does each completed survey have a unique surveyID?
@@ -351,6 +469,15 @@ sum(duplicated(baseline_data$final_ID))
 
 
 ```
+
+# CLEANED DATA FROM HERE ON
+
+```{r}
+# Export cleaned Data
+write.csv(baseline_data, "Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+```
+
+
 
 ## 1.4 Are there any programming bugs (e.g., response scale recorded incorrectly, skip logic flaws, all NAs, etc.)?
 
@@ -685,16 +812,24 @@ head(sort(apply(baseline_data, FUN = function(x) mean(x %in% 99), MARGIN = 2), d
 ```{r}
 
 #icc <- clus.rho(popchar = baseline_data$truth_discernment_1, cluster = baseline_data$B0_cluster)
-(icc <- clus.rho(popchar = baseline_data$detect_misinfo_1_1[baseline_data$detect_misinfo_1_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$detect_misinfo_1_1 != 88]))
+(icc_1 <- clus.rho(popchar = baseline_data$detect_misinfo_1_1[baseline_data$detect_misinfo_1_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$detect_misinfo_1_1 != 88]))
 
-(icc <- clus.rho(popchar = baseline_data$truth_discernment_1[baseline_data$truth_discernment_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$truth_discernment_1 != 88]))
+(icc_2 <- clus.rho(popchar = baseline_data$truth_discernment_1[baseline_data$truth_discernment_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$truth_discernment_1 != 88]))
 
-(icc <- clus.rho(popchar = baseline_data$vax_beh_int_1_1[baseline_data$vax_beh_int_1_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$vax_beh_int_1_1 != 88]))
+(icc_3 <- clus.rho(popchar = baseline_data$vax_beh_int_1_1[baseline_data$vax_beh_int_1_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$vax_beh_int_1_1 != 88]))
 
 # Predicted
-wp.crt2arm(n = 85/2, J = 108/2, icc = ifelse(icc$icc[1] < 0,0,icc$icc[1]), alpha = 0.05, power = 0.8)
+wp.crt2arm(n = 60/2, J = 108/2, icc = ifelse(icc_1$icc[1] < 0,0,icc_1$icc[1]), alpha = 0.05, power = 0.8)
 
 # Actual
+temp_df <- baseline_data %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n())
+
+temp_df <- temp_df %>% 
+  filter(n > 30)
+sd(temp_df$n)/mean(temp_df$n)
+
 temp_df <- baseline_data %>% 
   group_by(B0_cluster) %>% 
   summarise(n = n()) %>% 
@@ -702,7 +837,13 @@ temp_df <- baseline_data %>%
 
 wp.crt2arm(n = round(mean(temp_df$n)/2),
            J = round(length(unique(temp_df$B0_cluster))/2),
-           icc = ifelse(icc$icc[1] < 0,0,icc$icc[1]), 
+           icc = ifelse(icc_3$icc[1] < 0,0,icc_3$icc[1]), 
+           alpha = 0.05, 
+           power = 0.8)
+
+wp.crt2arm(n = temp_df$n/2,
+           J = round(length(unique(temp_df$B0_cluster))/2),
+           icc = ifelse(icc_3$icc[1] < 0,0,icc_3$icc[1]), 
            alpha = 0.05, 
            power = 0.8)
 
@@ -869,7 +1010,7 @@ st_write(survey_locations, dsn = "Data Exports/survey_locations.shp", append = F
 # Which survey submissions were not in the cluster
 survey_locations %>% 
   filter(within_cluster == FALSE) %>% 
-  filter(submission_date_dateonly >= "2023-10-30") %>% 
+  #filter(submission_date_dateonly >= "2023-10-30") %>% 
   group_by(en_name) %>% 
   summarise(sum_outside = sum(!within_cluster), mean_distance = mean(cluster_min_dist_in_meters), mean_accuracy_gps = mean(geopoint_recruitment.Accuracy)) %>% # Might this be due to the poor accuracy of the GPS
   arrange(desc(sum_outside))
@@ -902,17 +1043,17 @@ temp_df1 <- baseline_data %>%
   mutate(SubmissionDate = as.character(SubmissionDate)) %>% 
   dplyr::select(final_ID, SubmissionDate, duration, en_name, county_name_fo_location, B0_cluster, B1_name, audio)
 
-range_write(temp_df1, 
-            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
-            sheet = "Duration_Outliers",
-            range = "A1",
-            reformat = F)
+#range_write(temp_df1, 
+#            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+#            sheet = "Duration_Outliers",
+#            range = "A1",
+#            reformat = F)
 
 #################### Audit 25 additional surveys per week
 
 # Find out the last date that was uploaded and then filter for dates larger than that.
-regular_audits_so_far <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
-           sheet = "Regular_Audio_Audits")
+#regular_audits_so_far <- read_sheet(ss = #"https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+#           sheet = "Regular_Audio_Audits")
 
 set.seed(42)
 temp_df2 <- baseline_data %>%
@@ -925,12 +1066,12 @@ temp_df2 <- baseline_data %>%
   dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, audio) %>% 
   filter(!(final_ID %in% temp_df1$final_ID))
 
-range_write(temp_df2, 
-            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
-            sheet = "Regular_Audio_Audits",
-            range = paste0("A",nrow(regular_audits_so_far)+2),
-            reformat = F,
-            col_names = F)
+#range_write(temp_df2, 
+#            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+#            sheet = "Regular_Audio_Audits",
+#            range = paste0("A",nrow(regular_audits_so_far)+2),
+#            reformat = F,
+#            col_names = F)
 
 ############ Add manual Audio Audits
 
@@ -957,8 +1098,17 @@ mirriam_mukosi_additional <- c("30159Nov15124708", "21171Nov21110251", "86121Nov
 irene_omondi_additional <- c("50137Nov15131224", "20147Nov17174035", "69103Nov21092339", "20191Nov23100429")
 wasike_mahmoud_additional <- c("83126Nov15133300", "68144Nov18134828", "102168Nov24085714", "67159Nov22115501")
 catherine_njuguna_additional <- c("13102Nov13141723", "52169Nov17150050", "89196Nov20152652", "38120Nov23175924")
+Peninah_and_monica_anyango_doublrecruitment <- c("82151Oct26140757", "42123Nov28144602")
+kevin_onchana_double_recruitment <- c("92172Nov25140538", "48108Nov29132333")
+valentine_peter_masoni_double_recruitment <- c("105112Nov11135758", "101190Nov29155958")
+lenox_catherine_mutuku_double_recruitment <- c("18165Nov18092653", "104114Nov25104930")
+jones_kipsang_additional <- c("32198Nov25121138", "39134Nov28084113", "105123Nov29083025", "107136Nov30143035")
+amos_osumu_additional <- c("47195Nov24103631", "44178Nov25111005", "101112Nov27101737", "71162Nov29145936")
+dennis_omondi_additional <- c("32156Nov24075430", "64155Nov27122439", "28188Nov28144631", "75157Nov30110421")
+kennedy_kibor_additional <- c("86195Nov23141020", "59184Nov24131501", "102141Nov27140058", "100108Nov29122156")
+kennedy_omune_additional <- c("15141Nov13151758", "25179Nov16122327", "44197Nov17145055", "94140Nov18114951")
 
-manual_audio_audits <- unique(c(ids_cluster207_dense, benjamin_thoge, sarah_madaga_personal_request, eric_obose_random_set, ruth_ndungu_too_quick, omolo_no_gap_between_responses, evans_otieno_too_quick, howard_too_quick, omondi_dennis_no_gap, beverlyne_weird_overlap, ruth_kilobi_suspected_fraud, evant_otieno_additional, ruth_kilobi_additonal, lydia_additional, sarah_magada_double_phonenumber, jones_kipsang_arbitrary, kennedy_kibor_no_gap, peninah_mwongeli_kioko_no_gap, mirriam_mukosi_additional, irene_omondi_additional, wasike_mahmoud_additional, catherine_njuguna_additional))
+manual_audio_audits <- unique(c(ids_cluster207_dense, benjamin_thoge, sarah_madaga_personal_request, eric_obose_random_set, ruth_ndungu_too_quick, omolo_no_gap_between_responses, evans_otieno_too_quick, howard_too_quick, omondi_dennis_no_gap, beverlyne_weird_overlap, ruth_kilobi_suspected_fraud, evant_otieno_additional, ruth_kilobi_additonal, lydia_additional, sarah_magada_double_phonenumber, jones_kipsang_arbitrary, kennedy_kibor_no_gap, peninah_mwongeli_kioko_no_gap, mirriam_mukosi_additional, irene_omondi_additional, wasike_mahmoud_additional, catherine_njuguna_additional, Peninah_and_monica_anyango_doublrecruitment, kevin_onchana_double_recruitment, valentine_peter_masoni_double_recruitment, lenox_catherine_mutuku_double_recruitment, jones_kipsang_additional, amos_osumu_additional, dennis_omondi_additional, kennedy_kibor_additional, kennedy_omune_additional))
 
 temp_df2 <- baseline_data %>% 
   filter(final_ID %in% manual_audio_audits) %>%
@@ -970,12 +1120,12 @@ temp_df2 <- baseline_data %>%
 temp_df2 <- temp_df2[match(manual_audio_audits, temp_df2$final_ID),]
 
 
-range_write(data = temp_df2, 
-            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
-              sheet = "Manual_Audio_Audits",
-              range = "A2",
-              reformat = F,
-              col_names = F)
+#range_write(data = temp_df2, 
+#            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+#              sheet = "Manual_Audio_Audits",
+#              range = "A2",
+#              reformat = F,
+#              col_names = F)
 
 ############# Add manual backchecks
 
@@ -984,20 +1134,22 @@ duplicate_phonenumber_different_name <- c("37128Nov10152101")
 ruth_kilobi <- c("104196Oct26115513")
 evans_otieno <- c("78146Nov10131856", "102146Nov10100301")
 samson_gwada_super_short <- c("26159Nov17143958", "75144Nov17141622")
+amos_too_quick <- c("105110Nov28163406", "25126Nov28132113")
+yvonne_too_quick <- c("13173Nov24101050", "25160Nov25110620", "52146Nov24105346")
 
-manual_backchecks <- unique(c(benjamin_thoge, ruth_ndungu_too_quick, ruth_ndungu_additional, duplicate_phonenumber_different_name, ruth_kilobi, evans_otieno, samson_gwada_super_short))
+manual_backchecks <- unique(c(benjamin_thoge, ruth_ndungu_too_quick, ruth_ndungu_additional, duplicate_phonenumber_different_name, ruth_kilobi, evans_otieno, samson_gwada_super_short, amos_too_quick, yvonne_too_quick))
 
 
 baseline_data %>% 
   filter(final_ID %in% manual_backchecks) %>%
   mutate(submission_date_dateonly = as.character(submission_date_dateonly)) %>%
   mutate(duration_mins = round(duration/60)) %>% 
-  dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, B7_phonenumber, audio) %>%
-  range_write(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
-              sheet = "Backchecks",
-              range = "A2",
-              reformat = F,
-              col_names = F)
+  dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, B7_phonenumber, audio)# %>%
+  #range_write(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+  #            sheet = "Backchecks",
+  #            range = "A2",
+  #            reformat = F,
+  #            col_names = F)
 
 ```
 
@@ -1005,15 +1157,20 @@ baseline_data %>%
 
 ```{r}
 
-baseline_data %>% 
+cookies_verification_tracker <- read_sheet("https://docs.google.com/spreadsheets/d/14n18xOWBbRuFYj7VXLcdgi-AxmBVN0qUfbJWghto4ac/edit#gid=0")
+
+cookies_tobe_verified <- baseline_data %>% 
   filter(online_treatment_check == 1 & cookie_check == 1) %>% 
   dplyr::select(en_name, SubmissionDate, county_name_fo_location, website_proof_picture) %>% 
   mutate(SubmissionDate = as.character(SubmissionDate)) %>% 
-  range_write(ss = "https://docs.google.com/spreadsheets/d/14n18xOWBbRuFYj7VXLcdgi-AxmBVN0qUfbJWghto4ac/edit#gid=0",
-              sheet = "Cookie Image Tracker",
-              range = "A2",
-              col_names = F,
-              reformat = F)
+  filter(!(website_proof_picture %in% cookies_verification_tracker$`Link to Image`))
+
+range_write(cookies_tobe_verified, 
+            ss = "https://docs.google.com/spreadsheets/d/14n18xOWBbRuFYj7VXLcdgi-AxmBVN0qUfbJWghto4ac/edit#gid=0",
+            sheet = "Cookie Image Tracker",
+            range = paste0("A",nrow(cookies_verification_tracker)+2),
+            col_names = F,
+            reformat = F)
 
 ```
 
@@ -1145,12 +1302,12 @@ baseline_productivity <- mean(average_output$average_responses_by_cluster_by_fo,
 average_output$average_responses_by_cluster_by_fo[average_output$average_responses_by_cluster_by_fo < 1.00001] <- baseline_productivity
 
 # Remove clusters that have been abandoned
-average_output <- average_output[!(average_output$B0_cluster %in% c(197, 37, 186, 414, 141, 10, 363, 360, 248, 281)),]
+average_output <- average_output[!(average_output$B0_cluster %in% c(197, 37, 186, 414, 141, 10, 363, 360, 248, 281, 378, 54)),]
 
 # Add all clusters currently in the game where no data has been collected yet + add baseline productivity
 current_clusters <- surveycto_choices[surveycto_choices$list_name == "cluster_id" & !is.na(surveycto_choices$list_name),]$value
-new_clusters <- data.frame(B0_cluster = current_clusters[!(current_clusters %in% average_output$B0_cluster)], average_responses_by_cluster_by_fo = baseline_productivity)
-average_output <- rbind(average_output, new_clusters)
+#new_clusters <- data.frame(B0_cluster = current_clusters[!(current_clusters %in% average_output$B0_cluster)], average_responses_by_cluster_by_fo = baseline_productivity)
+#average_output <- rbind(average_output, new_clusters)
 
 ############################################### OPTIMISE FO ALLOCATION AND DIAGNOSE PREDICTED PROGRESS BY 15TH DECEMBER 2023
 
@@ -1306,7 +1463,7 @@ survey_locations %>%
 
 # Summary Stats on Duration in Minutes 
 temp_df <- baseline_data %>% 
-  filter(submission_date_dateonly >= as_date("2023-11-16")) %>% 
+  filter(submission_date_dateonly >= as_date("2023-11-23")) %>% 
   group_by(en_name) %>% 
   summarise(duration_mean = round(mean(duration/60)), 
             duration_median = round(median(duration/60)),
@@ -1317,6 +1474,11 @@ temp_df <- baseline_data %>%
   arrange(duration_min)
 temp_df
 
+temp_df <- baseline_data %>% 
+  filter(submission_date_dateonly >= as_date("2023-11-23")) %>%
+  mutate(duration = duration/60) %>% 
+  dplyr::select(final_ID, en_name, duration, endtime)
+temp_df
 
 # Is there any surveys that ended much later than they started?
 baseline_data %>% 
@@ -1371,7 +1533,7 @@ temp_df
 
 # How often does this happen per FO
 arbitrary_responses_df %>%
-  filter(baseline_data$submission_date_dateonly >= "2023-11-17") %>% 
+  filter(baseline_data$submission_date_dateonly >= "2023-11-23") %>% 
   group_by(en_name) %>% 
   summarise(mean_number_groups_single_response = mean(number_groups_single_resp),
           mean_share_groups_single_response = mean(share_groups_single_resp)) %>% 
@@ -1460,8 +1622,4 @@ How many per FO
 -Outliers, “don’t know” patterns, + tbd
 -Match with Hairdressers (who is (not) ineligible). What is the rate of ineligibility?
 
-# ------  Matching ------ 
-
-- Plan for tracking match between hairdresser<>participant (also export to Gsheets so that Isaac can mark which participant whose hairdresser rejected has been informed)
-- By FO --> Match with Hairdressers (who is (not) ineligible). What is the rate of ineligibility?
 
