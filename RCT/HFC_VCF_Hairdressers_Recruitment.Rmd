@@ -1,0 +1,22 @@
+---
+title: "HFC_VCF_Hairdressers_Recruitment"
+author: "Jonathan Karl"
+date: "2024-01-10"
+output: html_document
+---
+
+# ------ Hairdressers ------ 
+
+Keep track of recruitment progress to cross-check with Isaacs tracking (and vice versa)
+Forecast recruitment timeline
+What are the geolocations of the hairdressers? --> Match them
+
+How many per FO
+- Recruits
+- Duration distribution of recruitment survey
+- Breakdown of Demographics (check for imbalances)
+- Outliers, “don’t know” patterns, + tbd
+- Match with Hairdressers (who is (not) ineligible). What is the rate of ineligibility?
+- In person vs. via call --> cross check with presence of phone number in cleaned baseline survey
+
+- Did you already recruit this hairdresser?

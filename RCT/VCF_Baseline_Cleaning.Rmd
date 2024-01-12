@@ -1,0 +1,617 @@
+---
+title: "VCF_Baseline_Cleaning"
+author: "Jonathan Karl"
+date: "2024-01-09"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+## Setup
+
+```{r}
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "lubridate", "stringdist")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+## Read Survey Data
+
+```{r}
+
+# Read data
+baseline_data <- read.csv("Raw Data/Main Data Collection/VCF2 - RCT - Recruitment + Baseline - Caregivers_WIDE.csv")
+
+# Fix the Stupid Stata ""-issue and Dates
+baseline_data[, sapply(baseline_data, class) == 'character'][baseline_data[, sapply(baseline_data, class) == 'character'] == ""] <- NA
+
+# Format dates
+baseline_data <- baseline_data %>% 
+  mutate_at(c("SubmissionDate","starttime","endtime"), as_datetime, format = "%d.%m.%Y %H:%M:%S")
+
+baseline_data$submission_week <- floor_date(baseline_data$SubmissionDate, "weeks", week_start = 1)
+baseline_data$submission_date_dateonly <- floor_date(baseline_data$SubmissionDate, "day")
+
+# Duration and Z scores
+baseline_data <- baseline_data %>% mutate(zscore_duration = (duration - mean(duration))/sd(duration))
+
+# Retain only responses where the participant consented
+baseline_data <- baseline_data %>% 
+  filter(consent == 1)
+
+# Filter for FO Training
+# baseline_data <- baseline_data %>% filter(SubmissionDate >= as_datetime("2023-10-17 14:00:00") & SubmissionDate < as_datetime("2023-10-20 00:00:00"))
+
+# Filter for RCT Pilots
+#baseline_data <- baseline_data %>% filter(SubmissionDate > as_datetime("2023-10-20 00:00:00"))
+
+# Filter for Main Data Collection
+baseline_data <- baseline_data %>% filter(SubmissionDate > as_datetime("2023-10-24 00:00:00"))
+
+# Filter all cluster 271 responses before 8th November (we are moving this cluster far)
+baseline_data <- baseline_data %>% filter(!(SubmissionDate < as_datetime("2023-11-08 00:00:00") & B0_cluster == 271))
+
+# Abandon Clusters
+baseline_data <- baseline_data %>% filter(B0_cluster != 197)
+baseline_data <- baseline_data %>% filter(B0_cluster != 37)
+baseline_data <- baseline_data %>% filter(B0_cluster != 186)
+baseline_data <- baseline_data %>% filter(B0_cluster != 414)
+baseline_data <- baseline_data %>% filter(B0_cluster != 141)
+baseline_data <- baseline_data %>% filter(B0_cluster != 10)
+baseline_data <- baseline_data %>% filter(B0_cluster != 363)
+baseline_data <- baseline_data %>% filter(B0_cluster != 54)
+baseline_data <- baseline_data %>% filter(B0_cluster != 378)
+baseline_data <- baseline_data %>% filter(B0_cluster != 248)
+
+```
+
+## Re-Organise Variables
+
+### 1. Clean the randomised questions
+
+```{r}
+
+################### Discernment
+
+# Coalesce the truth discernment columns
+for(i in 1:16){
+  baseline_data[paste0("truth_discernment_",i)] <- do.call(coalesce, baseline_data[,paste0("truth_discernment_", i, "_set",1:5)])
+}
+
+# Drop the truth discernment columns
+old_discernment_var_names <- apply(expand.grid("truth_discernment_",1:16,"_set",1:5), 1, paste0, collapse="")
+old_discernment_var_names <- str_remove_all(old_discernment_var_names, " ")
+baseline_data[old_discernment_var_names] <- NULL
+
+################### Manipulation
+
+# First ensure all the multi-select variable are character variables
+multi_select_manip_var_names <- apply(expand.grid("detect_misinfo_",1:12, "_2_set",1:5), 1, paste0, collapse="")
+multi_select_manip_var_names <- str_remove_all(multi_select_manip_var_names, " ")
+baseline_data[,multi_select_manip_var_names] <- data.frame(lapply(baseline_data[,multi_select_manip_var_names], as.character))
+
+# Coalesce the manipulation columns
+for(i in 1:12){
+  
+  # Is this manipulative?
+  baseline_data[paste0("detect_misinfo_",i,"_1")] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_1_set",1:5)])
+  
+  # Which techniques?
+  baseline_data[paste0("detect_misinfo_",i, "_2")] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_2_set",1:5)])
+  
+  # How confident?
+  baseline_data[paste0("detect_misinfo_",i, "_3")] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_3_set",1:5)])
+  
+  # Would you share?
+  baseline_data[paste0("detect_misinfo_",i, "_4")] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_4_set",1:5)])
+  
+  for(multi in c(1:6,88)){
+   
+    # Technique multiple select variable
+    baseline_data[paste0("detect_misinfo_",i,"_2_",multi)] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_2_set",1:5, "_", multi)])
+     
+  }
+}
+
+# Drop the truth discernment columns
+old_manipulation_var_names_1 <- apply(expand.grid("detect_misinfo_",1:12, "_", 1:4, "_set",1:5), 1, paste0, collapse="")
+old_manipulation_var_names_1 <- str_remove_all(old_manipulation_var_names_1, " ")
+old_manipulation_var_names_2 <- apply(expand.grid("detect_misinfo_",1:12, "_2_set",1:5, "_", c(1:6,88)), 1, paste0, collapse="")
+old_manipulation_var_names_2 <- str_remove_all(old_manipulation_var_names_2, " ")
+old_manipulation_var_names <- c(old_manipulation_var_names_1, old_manipulation_var_names_2)
+baseline_data[old_manipulation_var_names] <- NULL
+
+```
+
+## Filter Data
+
+### 1. Correct survey versions
+
+```{r}
+
+# For the Training Simulation the correct version was 2310171533
+# For the main data collection, the minimum acceptable version was 2310231825
+# From the 28th October, respondents should use 2310271446
+# From the 16th onwards everyone has to use the version 2311151046
+# From the 17th onwards everyone has to use the version 2311161331
+# From the 25th onwards everyone has to use the version 2311251219
+
+# Filter out wrong versions
+baseline_data <- baseline_data %>% 
+  filter(formdef_version >= 2310231825)
+
+```
+
+### 2. Eligibility Criteria
+
+Look at those who answered the first question in the baseline and check if they are actually eligible.
+If they are not, there is an error in the survey.
+
+**Recruitment Criteria:** 1.
+Male or female participants aged 18 years and over 2.
+Is the primary caregiver to a daughter between the ages of 10 and 14.
+3.
+Must have lived in the area for over one (1) year.
+4.
+Owns their own private smartphone.
+5.
+Has and uses a Facebook account.
+6.
+Is willing and able to participate in the survey.
+7.
+Willing to provide contact information on their hairdresser 8.
+Is not a hairdresser 9.
+Doesn't live in the same household with a hairdresser
+
+```{r}
+
+eligible <- baseline_data$B3_age != 1 & # Age
+  apply(baseline_data[,paste0("between_10_14_",1:max(baseline_data$B6_childnu_count, na.rm = T))] > 0, MARGIN = 1, FUN = function(i) any(i)) & # Female daughter between 10 - 14
+  baseline_data$B5_long == 2 & # lived there longer than 1 year
+  baseline_data$B7_smartphone == 1 & # Owns smartphone
+  baseline_data$B7_shared == 2 & # owns it privately
+  baseline_data$B8_socialmedia == 1 & # uses social media
+  baseline_data$B8a_whichone_1 == 1 & # uses Facebook
+  #### OCCUPATION & LIVING WITH HAIRDRESSER
+  baseline_data$consent_hairdresser == 1 & # consent to share contact of hairdresser
+  baseline_data$B16_hairdresser_confidence_check == 1 # Are we confident we can recruit this hairdresser?
+
+eligible[is.na(eligible)] <- FALSE # Fix NAs
+
+# Did anyone respond to the first baseline survey question that was not eligible? --? SHOULD BE FALSE
+any(!is.na(baseline_data$income_month) & !eligible)
+
+# Filter
+baseline_data <- baseline_data[eligible,] 
+
+```
+
+### 3. Unique SurveyID
+
+```{r}
+
+# Should be 0 - anything above 0 indicates there is a surveyID missing
+sum(is.na(baseline_data$final_ID))
+
+# Should be 0 - anything above 0 means there is a duplicate surveyID
+sum(duplicated(baseline_data$final_ID))
+
+# Delete buggy duplicate responses (delete the first)
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "15174Oct28132521")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "97180Oct30171347")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "66112Oct26162143")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "90113Oct24161649")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "93125Oct24142732")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "93118Oct24130037")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "96160Oct24111451")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "71172Nov13134137")[1],]
+
+# Should be 0 - anything above 0 means there is a duplicate surveyID
+sum(duplicated(baseline_data$final_ID))
+
+```
+
+## Manually edit data
+
+### 1. Mislabelled Clusters
+
+```{r}
+
+relabel_clusters <- function(finalids, correct_cluster){
+  
+  # What is the clusters treatment group 
+  correct_cluster_treatment_group <- unique(baseline_data$cluster_treatment_group[baseline_data$B0_cluster == correct_cluster])
+  
+  # Adjust clusterID
+  baseline_data[baseline_data$final_ID %in% finalids, ]$B0_cluster <<- correct_cluster
+  
+  if(length(correct_cluster_treatment_group) > 1){
+    print("ERROR")
+  }
+  
+  # Adjust treatment group
+  baseline_data[baseline_data$final_ID %in% finalids, ]$cluster_treatment_group <<- correct_cluster_treatment_group
+}
+
+
+
+relabel_clusters(c("98197Dec9171002", "76186Dec9123254", "77103Dec9105523", "84166Dec9134533", "13193Dec9154005", "44173Dec9144909", "20185Dec8174959", "77181Dec8164121", "38171Dec8154903", "42152Dec8133125", "44147Dec8114606", "39177Dec9113313"), 428)
+
+relabel_clusters(c("29187Nov29101906"), 128)
+
+relabel_clusters(c("63200Oct30121711", "29166Nov3090457", "69154Oct30154755"), 230)
+
+relabel_clusters(c("66183Nov8160224"), 280)
+
+relabel_clusters(c("63130Nov24165008"), 364)
+
+relabel_clusters(c("77166Dec7104701"), 103)
+
+relabel_clusters(c("102177Oct28132949", "70115Oct28164915"), 318)
+
+relabel_clusters(c("74106Dec13163729"), 318)
+
+relabel_clusters(c("20162Oct24145318"), 207)
+
+relabel_clusters(c("84165Nov23100932"), 403)
+
+relabel_clusters(c("72127Oct26150254", "89150Oct26160443"), 215)
+
+relabel_clusters(c("81161Nov16102342", "52162Nov16113233", "22111Nov16130039", "59133Nov16141055"), 239)
+
+relabel_clusters(c("28141Nov16130304", "104102Nov18143305", "63125Nov18155500", "35187Nov18165511", "27131Nov16101344", "15134Nov16170730"), 218)
+
+relabel_clusters(c("61139Nov23144905"), 282)
+
+relabel_clusters(c("67105Dec15104756", "64199Nov1141133"), 97)
+
+#c("39177Dec9113313") %in% baseline_data$final_ID
+```
+
+### 2. Remove Fradulent Data
+
+```{r}
+table(baseline_data[baseline_data$en_name == "Ruth Wanjiru Ndungu",]$B0_cluster)
+
+baseline_data %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) %>% 
+  arrange(B0_cluster)
+```
+
+### 3. Manually adjust FO mistakes
+
+```{r}
+
+# 20th Nov, Shanice Linah accidentally keyed in Kiambu as a location instead of Nairobi to the respondent named Lucy Nyamoita
+baseline_data[baseline_data$final_ID %in% c("24170Nov20092513"), ]$county_name <- "Nairobi"
+baseline_data[baseline_data$final_ID %in% c("24170Nov20092513"), ]$county_name_fo_location <- "Nairobi"
+
+```
+
+### 4. Update new Hairdresser Information acquired post survey
+
+```{r}
+
+# Read sheet with updated information
+hairdresser_additional_info <- read_sheet("https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", sheet = "Enough Info to Recruit?")
+
+# Which columns are to be updated
+update_columns <- c("Hairdresser Phone Number", "More detailed Name", "More detailed Nickname", "More detailed Directions")
+
+# Which rows contain additional information
+additional_info_idx <- rowSums(is.na(hairdresser_additional_info[,update_columns])) != ncol(hairdresser_additional_info[,update_columns])
+
+# Update the information
+for(i in hairdresser_additional_info[additional_info_idx,]$final_ID){
+  
+  # Update Phone Number
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`Hairdresser Phone Number`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B11a_phonenumber <- hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`Hairdresser Phone Number`
+    
+  } else {
+    next
+  }
+  
+  # Update Name
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Name`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B13_hairdressername <- paste(baseline_data[baseline_data$final_ID == i,]$B13_hairdressername,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Name`)
+    
+  } else {
+    next
+  }
+  
+  # Update Nickname
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Nickname`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B13_hairdresser_nickname <- paste(baseline_data[baseline_data$final_ID == i,]$B13_hairdresser_nickname,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Nickname`)
+    
+  } else {
+    next
+  }
+  
+  # Update Location
+  baseline_data[baseline_data$final_ID == i,]$B14_hairdresserlocation <- paste(baseline_data[baseline_data$final_ID == i,]$B14_hairdresserlocation,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Directions`)
+  
+}
+
+```
+
+### 5. Secondary Phone Number Unification
+
+--\> Ensuring every unique secondary phone number is matched to only 1 primary phone number
+
+```{r}
+
+
+# Which primary phone numbers appear more than once
+primary_phoneno_freq <- table(baseline_data$B11a_phonenumber) > 1
+multi_phoneno <- as.numeric(names(primary_phoneno_freq[primary_phoneno_freq]))
+count <- 1
+
+# TAKING THE ALTERNATIVE PHONE NUMBER OUT OF THE GAME
+for(i in unique(baseline_data$B11a_phonenumber[baseline_data$B11a_phonenumber %in% multi_phoneno])){
+  
+  if(all(is.na(baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)]))){
+    next
+  }
+  
+  if(length(unique(baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i])) > 1) {
+    print(paste0("Count: ",count, " ----- Primary: ", i," Discrepancy: ", paste(baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")))
+    
+    x <- baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)]
+    for(i in unique(x[!is.na(x)])){
+      alternative_phonenumber_somewhereelse <- sum(baseline_data$B12a_alternativepn == i, na.rm = T) != sum(x[!is.na(x)] == i)
+      if(alternative_phonenumber_somewhereelse){
+        
+        unique(baseline_data$B11a_phonenumber[which(baseline_data$B12a_alternativepn == i)])
+        
+        print(paste(i, "ALSO FOUND SOMEWHERE ELSE --- ", paste0(unique(baseline_data$B11a_phonenumber[which(baseline_data$B12a_alternativepn == i)]), collapse = ", ")))}
+    }
+  
+    } else {
+    print(paste0("Count: ",count, "<>: ", baseline_data$B12a_alternativepn[baseline_data$B11a_phonenumber == i]))
+    }
+  count <- count+1
+}
+
+```
+
+```{r}
+
+# Adjust alternative phone numbers
+
+# This one was just a typo. It was supposed to be 769145547 but the FO typed 769145541
+baseline_data$B11a_phonenumber[baseline_data$B11a_phonenumber == "769145541" & !is.na(baseline_data$B11a_phonenumber)] <- 769145547
+
+# This hairdresser appears to have 3 phone numbers. This is unified to enable easier matching where the first phone number is unified. (The third number is added to the location to retain the information)
+baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == "725524368" & !is.na(baseline_data$B11a_phonenumber)] <- paste0(baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == "725524368" & !is.na(baseline_data$B11a_phonenumber)], " --------- additional phonenumber: 725524368")
+baseline_data$B11a_phonenumber[baseline_data$B11a_phonenumber == "725524368" & !is.na(baseline_data$B11a_phonenumber)] <- 705764995
+
+```
+
+
+```{r}
+
+baseline_data %>% 
+  filter(cluster_treatment_group %in% c("Offline_Only", "Online_Offline")) %>% 
+  filter(county_name == "Nairobi") %>% 
+  group_by(B11a_phonenumber) %>% 
+  summarise(n = n()) %>% 
+  arrange(desc(n))
+
+
+baseline_data$B13_hairdressername[baseline_data$B11a_phonenumber == 723597681 & !is.na(baseline_data$B11a_phonenumber)]
+baseline_data$B13_hairdresser_nickname[baseline_data$B11a_phonenumber == 723597681 & !is.na(baseline_data$B11a_phonenumber)]
+baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == 723597681 & !is.na(baseline_data$B11a_phonenumber)]
+
+baseline_data$B13_hairdressername[baseline_data$B11a_phonenumber == 712831038 & !is.na(baseline_data$B11a_phonenumber)]
+baseline_data$B13_hairdresser_nickname[baseline_data$B11a_phonenumber == 712831038 & !is.na(baseline_data$B11a_phonenumber)]
+baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == 712831038 & !is.na(baseline_data$B11a_phonenumber)]
+
+baseline_data$B13_hairdressername[baseline_data$B11a_phonenumber == 722888318 & !is.na(baseline_data$B11a_phonenumber)]
+baseline_data$B13_hairdresser_nickname[baseline_data$B11a_phonenumber == 722888318 & !is.na(baseline_data$B11a_phonenumber)]
+baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == 722888318 & !is.na(baseline_data$B11a_phonenumber)]
+
+
+
+```
+
+
+### 6. Detecting Typos in Phone Numbers
+
+```{r}
+
+primary_phone_numbers <- baseline_data$B11a_phonenumber[!is.na(baseline_data$B11a_phonenumber)]
+unique_primary_phone_numbers <- unique(baseline_data$B11a_phonenumber[!is.na(baseline_data$B11a_phonenumber)])
+count <- 1
+suspected_typos_df <- data.frame()
+
+for(i in unique_primary_phone_numbers){
+  lv_dist <- stringdist(i, unique_primary_phone_numbers, method = 'lv')
+  
+  if(sum(lv_dist < 3 & lv_dist > 0) > 0){
+    
+    # Collect Data on the Source
+    freq_source <- sum(i == primary_phone_numbers)
+    cluster_id_source <- paste(baseline_data$B0_cluster[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+    hairdresser_name_source <- paste(baseline_data$B13_hairdressername[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+    hairdresser_nickname_source <- paste(baseline_data$B13_hairdresser_nickname[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+    hairdresser_location <- paste(baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = "\n")
+    final_ids_source <- paste(baseline_data$final_ID[baseline_data$B11a_phonenumber == i & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+    
+    # Collect Data on the Proximal Phone Numbers
+    phone_numbers_proximity <- lv_dist[lv_dist < 3 & lv_dist > 0]
+    proximal_phone_numbers <- unique_primary_phone_numbers[lv_dist < 3 & lv_dist > 0]
+    freq_proximal <- table(primary_phone_numbers[primary_phone_numbers %in% proximal_phone_numbers])
+    freq_proximal <- freq_proximal[match(proximal_phone_numbers, names(freq_proximal))]
+    
+    #print(paste0("Count (", count, ") -- Source (n=",freq_source,"): ", i, " ----Proximal Phone Number: ", paste0(names(freq_proximal), " (n=", freq_proximal, "): Distance", "(", phone_numbers_proximity, ")", collapse = " || ")))
+    count <- count + 1
+    
+    count_2 <- 1
+    for(j in proximal_phone_numbers){
+      cluster_id_proximal <- paste(baseline_data$B0_cluster[baseline_data$B11a_phonenumber == j & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+      hairdresser_name_proximal <- paste(baseline_data$B13_hairdressername[baseline_data$B11a_phonenumber == j & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+      hairdresser_nickname_proximal <- paste(baseline_data$B13_hairdresser_nickname[baseline_data$B11a_phonenumber == j & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+      hairdresser_location_proximal <- paste(baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == j & !is.na(baseline_data$B11a_phonenumber)], collapse = "\n")
+      final_ids_proximal <- paste(baseline_data$final_ID[baseline_data$B11a_phonenumber == j & !is.na(baseline_data$B11a_phonenumber)], collapse = ", ")
+      
+      # Compile a new row to add to the dataframe to aid identification of typos
+      temp_data1 <- data.frame(Source_Phonenumber = i,
+                               Source_Information = paste0("N = ",freq_source, "\n",
+                                                           "Cluster ID: ", paste0(cluster_id_source, collapse = ", "), "\n",
+                                                           "Hairdresser Name: ", paste0(hairdresser_name_source, collapse = ", "), "\n",
+                                                           "Hairdresser Nickname: ", paste0(hairdresser_nickname_source, collapse = ", "), "\n",
+                                                           "\nHairdresser Location:\n", paste0(hairdresser_location, collapse = "\n")),
+                             Source_IDs = final_ids_source,
+                             Proximal_Phonenumber = proximal_phone_numbers[count_2], 
+                             Proximal_Information = paste0("N = ", freq_proximal[count_2], "\n",
+                                                           "Proximity: ", phone_numbers_proximity[count_2], "\n",
+                                                           "Cluster ID: ", paste0(cluster_id_proximal, collapse = ", "), "\n",
+                                                           "Hairdresser Name: ", paste0(hairdresser_name_proximal, collapse = ", "), "\n",
+                                                           "Hairdresser Nickname: ", paste0(hairdresser_nickname_proximal, collapse = ", "), "\n",
+                                                           "\nHairdresser Location:\n", paste0(hairdresser_location_proximal, collapse = "\n")),
+                             Proximal_IDs = final_ids_proximal)
+      
+      suspected_typos_df <- rbind(suspected_typos_df, temp_data1)
+      
+      count_2 <- count_2 + 1
+    }
+  }
+}
+
+#range_write(suspected_typos_df, 
+#            ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=1106637800",
+#            sheet = "Detecting Phone Number Typos",
+#            range = "A2",
+#            col_names = F,
+#            reformat = F)
+
+```
+
+##### 6.1 Fix
+
+```{r}
+
+# There is one hairdresser which has two phone numbers but respondents going there have all just filled one. The code below fixes that.
+baseline_data$B12a_alternativepn[baseline_data$final_ID %in% c("54168Dec8102822", "64185Dec8121511", "87125Dec12120750", "73118Dec12144407")] <- 104503182
+baseline_data$B11a_phonenumber[baseline_data$final_ID %in% c("89177Nov30125223")] <- 724503182
+baseline_data$B11a_phonenumber_double[baseline_data$final_ID %in% c("89177Nov30125223")] <- 724503182
+baseline_data$B12a_alternativepn[baseline_data$final_ID %in% c("89177Nov30125223")] <- 104503182
+
+# There is one hairdresser that upon confirming a typo gave us 2 phone numbers. Code below adds the second as an alternative phone number
+baseline_data$B12a_alternativepn[baseline_data$final_ID %in% c("106181Nov20112523")] <- 0711498982
+
+```
+
+```{r}
+
+# First remove all phone number entries that contain 7000000
+baseline_data[baseline_data$B11a_phonenumber == "700000000" & !is.na(baseline_data$B11a_phonenumber),]$B11_phonenumber_check <- 0
+baseline_data[baseline_data$B11a_phonenumber == "700000000" & !is.na(baseline_data$B11a_phonenumber),]$B11a_phonenumber_double <- NA
+baseline_data[baseline_data$B11a_phonenumber == "700000000" & !is.na(baseline_data$B11a_phonenumber),]$B11a_phonenumber <- NA
+
+```
+
+
+```{r}
+typo_detection_sheet <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=1106637800",
+                                   sheet = "Detecting Phone Number Typos")
+colnames(typo_detection_sheet)[10] <- "correct_phone_number_source"
+colnames(typo_detection_sheet)[11] <- "correct_phone_number_proximal"
+
+# Replace "None" with NA
+typo_detection_sheet$correct_phone_number_source[which(typo_detection_sheet$correct_phone_number_source == "None")] <- NA
+typo_detection_sheet$correct_phone_number_proximal[which(typo_detection_sheet$correct_phone_number_proximal == "None")] <- NA
+
+
+# Go through the sheet and replace the relevant numbers
+for(i in 1:nrow(typo_detection_sheet)){
+  
+  if(typo_detection_sheet$Judgement[i] == "Independent Numbers"){
+    
+    next
+    
+  } else if(typo_detection_sheet$Judgement[i] == "Both have a Typo"){
+    
+    baseline_data$B11a_phonenumber[baseline_data$final_ID %in% str_split(typo_detection_sheet$Source_IDs, ", ")[[i]]] <- typo_detection_sheet$correct_phone_number_source[[i]]
+    
+    baseline_data$B11a_phonenumber[baseline_data$final_ID %in% str_split(typo_detection_sheet$Proximal_IDs, ", ")[[i]]] <- typo_detection_sheet$correct_phone_number_proximal[[i]]
+    
+  } else if(typo_detection_sheet$Judgement[i] == "Source has a Typo"){
+    
+    baseline_data$B11a_phonenumber[baseline_data$final_ID %in% str_split(typo_detection_sheet$Source_IDs, ", ")[[i]]] <- typo_detection_sheet$correct_phone_number_source[[i]]
+    
+  } else if(typo_detection_sheet$Judgement[i] == "Proximal has a Typo"){
+    
+    baseline_data$B11a_phonenumber[baseline_data$final_ID %in% str_split(typo_detection_sheet$Proximal_IDs, ", ")[[i]]] <- typo_detection_sheet$correct_phone_number_proximal[[i]]
+    
+  }
+}
+
+```
+
+
+
+### 7. Manually matching hairdressers based on locations that don't have phone numbers
+
+```{r}
+
+# Extract all IDs where no phone number for the hairdresser was provided
+
+baseline_data[baseline_data$B11_phonenumber_check == 0 | is.na(baseline_data$B11a_phonenumber),] %>% 
+  arrange(county_name, B0_cluster, submission_date_dateonly) %>% 
+  dplyr::select(final_ID, en_name, county_name, B0_cluster, B13_hairdressername, B13_hairdresser_nickname, B14_hairdresserlocation) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", 
+              sheet = "Matching_Hairdressers_without_phonenumbers", 
+              range = "A2", 
+              col_names = F, 
+              reformat = F)
+  
+
+# Upload all other responses to enable effective command+f work
+baseline_data[baseline_data$B11_phonenumber_check == 1  | !is.na(baseline_data$B11a_phonenumber),] %>% 
+  arrange(county_name, B0_cluster, submission_date_dateonly) %>% 
+  dplyr::select(final_ID, en_name, county_name, B0_cluster, B13_hairdressername, B13_hairdresser_nickname, B14_hairdresserlocation) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", 
+              sheet = "Matching_Hairdressers_without_phonenumbers", 
+              range = paste0("A",sum(baseline_data$B11_phonenumber_check == 0 | is.na(baseline_data$B11a_phonenumber))+3), 
+              col_names = F, 
+              reformat = F)
+
+
+```
+
+
+## Export
+
+```{r}
+# Export cleaned Data
+write.csv(baseline_data, "Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+
+test <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+
+```

@@ -173,39 +173,53 @@ baseline_data[old_manipulation_var_names] <- NULL
 
 ```{r}
 
+relabel_clusters <- function(finalids, correct_cluster){
+  
+  # What is the clusters treatment group 
+  correct_cluster_treatment_group <- unique(baseline_data$cluster_treatment_group[baseline_data$B0_cluster == correct_cluster])
+  
+  # Adjust clusterID
+  baseline_data[baseline_data$final_ID %in% finalids, ]$B0_cluster <<- correct_cluster
+  
+  if(length(correct_cluster_treatment_group) > 1){
+    print("ERROR")
+  }
+  
+  # Adjust treatment group
+  baseline_data[baseline_data$final_ID %in% finalids, ]$cluster_treatment_group <<- correct_cluster_treatment_group
+}
 
-baseline_data[baseline_data$final_ID %in% c("98197Dec9171002", "76186Dec9123254", "77103Dec9105523", "84166Dec9134533", "13193Dec9154005", "44173Dec9144909", "20185Dec8174959", "77181Dec8164121", "38171Dec8154903", "42152Dec8133125", "44147Dec8114606", "39177Dec9113313"), ]$B0_cluster <- 428
 
-baseline_data[baseline_data$final_ID %in% c("29187Nov29101906"), ]$B0_cluster  <- 128
 
-baseline_data[baseline_data$final_ID %in% c("63200Oct30121711", "29166Nov3090457", "69154Oct30154755"), ]$B0_cluster <- 230
+relabel_clusters(c("98197Dec9171002", "76186Dec9123254", "77103Dec9105523", "84166Dec9134533", "13193Dec9154005", "44173Dec9144909", "20185Dec8174959", "77181Dec8164121", "38171Dec8154903", "42152Dec8133125", "44147Dec8114606", "39177Dec9113313"), 428)
 
-baseline_data[baseline_data$final_ID %in% c("66183Nov8160224"), ]$B0_cluster <-280
+relabel_clusters(c("29187Nov29101906"), 128)
 
-baseline_data[baseline_data$final_ID %in% c("63130Nov24165008"), ]$B0_cluster <- 364
+relabel_clusters(c("63200Oct30121711", "29166Nov3090457", "69154Oct30154755"), 230)
 
-baseline_data[baseline_data$final_ID %in% c("77166Dec7104701"), ]$B0_cluster <- 103
+relabel_clusters(c("66183Nov8160224"), 280)
 
-baseline_data[baseline_data$final_ID %in% c("102177Oct28132949", "70115Oct28164915"), ]$B0_cluster <- 318
+relabel_clusters(c("63130Nov24165008"), 364)
 
-baseline_data[baseline_data$final_ID %in% c("74106Dec13163729"), ]$B0_cluster <- 318
+relabel_clusters(c("77166Dec7104701"), 103)
 
-baseline_data[baseline_data$final_ID %in% c("20162Oct24145318"), ]$B0_cluster <- 207
+relabel_clusters(c("102177Oct28132949", "70115Oct28164915"), 318)
 
-baseline_data[baseline_data$final_ID %in% c("84165Nov23100932"), ]$B0_cluster <- 403
+relabel_clusters(c("74106Dec13163729"), 318)
 
-baseline_data[baseline_data$final_ID %in% c("72127Oct26150254", "89150Oct26160443"), ]$B0_cluster <- 215
+relabel_clusters(c("20162Oct24145318"), 207)
 
-baseline_data[baseline_data$final_ID %in% c("81161Nov16102342", "52162Nov16113233", "22111Nov16130039", "59133Nov16141055"), ]$B0_cluster <- 239
+relabel_clusters(c("84165Nov23100932"), 403)
 
-baseline_data[baseline_data$final_ID %in% c("28141Nov16130304", "104102Nov18143305", "63125Nov18155500", "35187Nov18165511", "27131Nov16101344", "15134Nov16170730"), ]$B0_cluster <- 218
+relabel_clusters(c("72127Oct26150254", "89150Oct26160443"), 215)
 
-baseline_data[baseline_data$final_ID %in% c("61139Nov23144905"), ]$B0_cluster <- 282
+relabel_clusters(c("81161Nov16102342", "52162Nov16113233", "22111Nov16130039", "59133Nov16141055"), 239)
 
-baseline_data[baseline_data$final_ID %in% c("67105Dec15104756"), ]$B0_cluster <- 97
+relabel_clusters(c("28141Nov16130304", "104102Nov18143305", "63125Nov18155500", "35187Nov18165511", "27131Nov16101344", "15134Nov16170730"), 218)
 
-baseline_data[baseline_data$final_ID %in% c("64199Nov1141133"), ]$B0_cluster <- 97
+relabel_clusters(c("61139Nov23144905"), 282)
 
+relabel_clusters(c("67105Dec15104756", "64199Nov1141133"), 97)
 
 #c("39177Dec9113313") %in% baseline_data$final_ID
 ```
@@ -837,11 +851,11 @@ temp_df <- baseline_data %>%
 
 wp.crt2arm(n = round(mean(temp_df$n)/2),
            J = round(length(unique(temp_df$B0_cluster))/2),
-           icc = ifelse(icc_3$icc[1] < 0,0,icc_3$icc[1]), 
+           icc = ifelse(icc_1$icc[1] < 0,0,icc_1$icc[1]), 
            alpha = 0.05, 
            power = 0.8)
 
-wp.crt2arm(n = temp_df$n/2,
+wp.crt2arm(n = round(mean(temp_df$n)/2),
            J = round(length(unique(temp_df$B0_cluster))/2),
            icc = ifelse(icc_3$icc[1] < 0,0,icc_3$icc[1]), 
            alpha = 0.05, 
@@ -979,7 +993,7 @@ time_outliers_df <- baseline_data[baseline_data$zscore_duration < -2,]
 ```{r}
 
 # Location of SurveyIDs
-survey_locations <- SpatialPointsDataFrame(coords = cbind(baseline_data$geopoint_recruitment.Longitude, baseline_data$geopoint_recruitment.Latitude), data = baseline_data[,c("B0_cluster", "en_name", "county_name", "geopoint_recruitment.Accuracy", "final_ID", "endtime", "submission_date_dateonly")], proj4string = CRS("EPSG:4326"))
+survey_locations <- SpatialPointsDataFrame(coords = cbind(baseline_data$geopoint_recruitment.Longitude, baseline_data$geopoint_recruitment.Latitude), data = baseline_data[,c("B0_cluster", "en_name", "county_name", "geopoint_recruitment.Accuracy", "final_ID", "endtime", "submission_date_dateonly", "cluster_treatment_group")], proj4string = CRS("EPSG:4326"))
 
 # Convert data format
 survey_locations <- st_as_sf(survey_locations)
@@ -1052,8 +1066,8 @@ temp_df1 <- baseline_data %>%
 #################### Audit 25 additional surveys per week
 
 # Find out the last date that was uploaded and then filter for dates larger than that.
-#regular_audits_so_far <- read_sheet(ss = #"https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
-#           sheet = "Regular_Audio_Audits")
+regular_audits_so_far <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+           sheet = "Regular_Audio_Audits")
 
 set.seed(42)
 temp_df2 <- baseline_data %>%
@@ -1108,7 +1122,88 @@ dennis_omondi_additional <- c("32156Nov24075430", "64155Nov27122439", "28188Nov2
 kennedy_kibor_additional <- c("86195Nov23141020", "59184Nov24131501", "102141Nov27140058", "100108Nov29122156")
 kennedy_omune_additional <- c("15141Nov13151758", "25179Nov16122327", "44197Nov17145055", "94140Nov18114951")
 
-manual_audio_audits <- unique(c(ids_cluster207_dense, benjamin_thoge, sarah_madaga_personal_request, eric_obose_random_set, ruth_ndungu_too_quick, omolo_no_gap_between_responses, evans_otieno_too_quick, howard_too_quick, omondi_dennis_no_gap, beverlyne_weird_overlap, ruth_kilobi_suspected_fraud, evant_otieno_additional, ruth_kilobi_additonal, lydia_additional, sarah_magada_double_phonenumber, jones_kipsang_arbitrary, kennedy_kibor_no_gap, peninah_mwongeli_kioko_no_gap, mirriam_mukosi_additional, irene_omondi_additional, wasike_mahmoud_additional, catherine_njuguna_additional, Peninah_and_monica_anyango_doublrecruitment, kevin_onchana_double_recruitment, valentine_peter_masoni_double_recruitment, lenox_catherine_mutuku_double_recruitment, jones_kipsang_additional, amos_osumu_additional, dennis_omondi_additional, kennedy_kibor_additional, kennedy_omune_additional))
+# Add audits for those we overlooked.
+unaudited_fos <- c("Barnice Owiti", "Samuel Sururu", "Mary Kadzo Ngowa", "Boniface Mureithi", "Valentine Bwire", "Diana Musembi", "Stephen Ng'ang'a", "Emmanuel Simiyu", "Howard Sindani", "Churchill Steve Otieno", "Alice Awino", "Alice Mwende Muema", "Esther Adhiambo", "Oscar Musumba", "Shanice Linah Adhiambo", "Linah Nyarua Waithera", "Winnie Wafula", "Domitila Mutunga", "Tabitha Etyang", "Sahara Mohammed", "Sarah Madaga", "Yvonne Ochieng", "Nereah Okeyo", "Daisy Odongo", "Everlyne Muema", "Roderick Mayaka", "Hellen Sayano")
+current_audit_state <- c(0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0)
+current_audit_state_vec <- c(abs(current_audit_state-2))
+names(current_audit_state_vec) <- unaudited_fos
+set.seed(34)
+unaudited_df <- baseline_data %>% 
+  filter(en_name %in% unaudited_fos) %>% 
+  filter(!is.na(audio)) %>% 
+  group_by(en_name) %>%
+  sample_n(2) %>% 
+  mutate(row_num = row_number()) %>% 
+  filter(row_num <= map_dbl(en_name, ~ current_audit_state_vec[.x])) %>%
+  select(-row_num)
+
+# Add more audits for those that were dismissed or temporarily suspended to establish consistency over time of their behaviour or identify when it started/stopped to delete data in an informed way
+
+# Read overview data of audio audits of frauds
+temp <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1714779342",
+           sheet = "FOs suspected of fraud")
+# For which dates did we do audios
+all_detected_dates <- str_extract_all(temp$`When did they do surveys poorly`, "[0-9]+[thsrd]{2} [A-Za-z]{3} [0-9]{4}")
+all_detected_dates_clean <- lapply(all_detected_dates, str_remove_all, "st|nd|rd|th")
+all_detected_dates_dateobj <- lapply(all_detected_dates_clean, as.Date, format = "%d %b %Y")
+bad_data_date_ranges <- lapply(all_detected_dates_dateobj, range)
+bad_data_date_ranges_df <- data.frame(cbind(temp$`FO name`, t(data.frame(bad_data_date_ranges))), row.names = NULL)
+colnames(bad_data_date_ranges_df) <- c("en_name", "first_bad_detected", "last_bad_detected")
+
+# Get more data to cover all weeks from the 24th October to the 15th December
+tmp_list <- lapply(bad_data_date_ranges_df$en_name, function(i) range(baseline_data$SubmissionDate[baseline_data$en_name == i]))
+bad_data_date_ranges_df <- cbind(bad_data_date_ranges_df, t(data.frame(tmp_list)), row.names = NULL)
+colnames(bad_data_date_ranges_df) <- c("en_name", "first_bad_detected", "last_bad_detected", "first_survey", "last_survey")
+
+uncover_unexplored_dates <- function(fo_name){
+  fo_date_range_all <- baseline_data$SubmissionDate[baseline_data$en_name == fo_name]
+  fo_date_range_bad_detected <- as_date(unlist(bad_data_date_ranges_df[bad_data_date_ranges_df$en_name == fo_name,c("first_bad_detected", "last_bad_detected")]))
+  fo_date_range_unexplored <- fo_date_range_all[fo_date_range_all < fo_date_range_bad_detected[1] | fo_date_range_all > fo_date_range_bad_detected[2]]
+  
+  return(fo_date_range_unexplored)
+}
+x <- lapply(bad_data_date_ranges_df$en_name, uncover_unexplored_dates)
+names(x) <- bad_data_date_ranges_df$en_name
+
+sample_more_audits <- function(fo_name, n){
+  
+  fo_date_range_bad_detected <- as_date(unlist(bad_data_date_ranges_df[bad_data_date_ranges_df$en_name == fo_name,c("first_bad_detected", "last_bad_detected")]))
+
+  temp <- baseline_data %>% 
+    filter(en_name == fo_name) %>% 
+    mutate(submission_date_dateonly = as_date(submission_date_dateonly)) %>% 
+    filter(submission_date_dateonly < fo_date_range_bad_detected[1] | submission_date_dateonly > fo_date_range_bad_detected[2]) %>% 
+    filter(!is.na(audio)) %>% 
+    select(final_ID, submission_date_dateonly) %>% 
+    sample_n(n)
+  
+  return(temp$final_ID)
+}
+
+# Sample more for the cheaters
+set.seed(24)
+additional_cheater_scrutiny <- c(sample_more_audits("Evans Otieno", 5),
+sample_more_audits("Samson Gwada", 6),
+sample_more_audits("Kevin Onchana", 6),
+sample_more_audits("Lydia Kariuki", 6),
+sample_more_audits("Ruth Wanjiru Ndungu", 5),
+sample_more_audits("Catherine Njuguna", 5),
+sample_more_audits("Wasike Mahmoud Mukoche", 5),
+sample_more_audits("Peninah Mwongeli Kioko", 5),
+sample_more_audits("Ruth Kilobi", 4),
+sample_more_audits("Benjamin Thoge", 4),
+sample_more_audits("Eric Obose", 4),
+sample_more_audits("Mirriam Mukosi", 4),
+sample_more_audits("Irene Omondi", 4),
+sample_more_audits("Jones Kipsang", 4),
+sample_more_audits("Omondi Dennis Robert", 5),
+sample_more_audits("Omolo Kennedy Omune", 5))
+
+# Amos Osumo has almost no audios...adding then manually
+amos_osumo_additional <- c("65169Nov2130949", "81127Nov2154740", "71188Nov7095006", "101112Nov27101737", "81200Nov27164712")
+
+# COMPILE FINAL VECTOR WITH ALL FINAL_IDs 
+manual_audio_audits <- unique(c(ids_cluster207_dense, benjamin_thoge, sarah_madaga_personal_request, eric_obose_random_set, ruth_ndungu_too_quick, omolo_no_gap_between_responses, evans_otieno_too_quick, howard_too_quick, omondi_dennis_no_gap, beverlyne_weird_overlap, ruth_kilobi_suspected_fraud, evant_otieno_additional, ruth_kilobi_additonal, lydia_additional, sarah_magada_double_phonenumber, jones_kipsang_arbitrary, kennedy_kibor_no_gap, peninah_mwongeli_kioko_no_gap, mirriam_mukosi_additional, irene_omondi_additional, wasike_mahmoud_additional, catherine_njuguna_additional, Peninah_and_monica_anyango_doublrecruitment, kevin_onchana_double_recruitment, valentine_peter_masoni_double_recruitment, lenox_catherine_mutuku_double_recruitment, jones_kipsang_additional, amos_osumu_additional, dennis_omondi_additional, kennedy_kibor_additional, kennedy_omune_additional, unaudited_df$final_ID, additional_cheater_scrutiny, amos_osumo_additional))
 
 temp_df2 <- baseline_data %>% 
   filter(final_ID %in% manual_audio_audits) %>%
@@ -1120,12 +1215,12 @@ temp_df2 <- baseline_data %>%
 temp_df2 <- temp_df2[match(manual_audio_audits, temp_df2$final_ID),]
 
 
-#range_write(data = temp_df2, 
-#            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
-#              sheet = "Manual_Audio_Audits",
-#              range = "A2",
-#              reformat = F,
-#              col_names = F)
+range_write(data = temp_df2, 
+            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+              sheet = "Manual_Audio_Audits",
+              range = "A2",
+              reformat = F,
+              col_names = F)
 
 ############# Add manual backchecks
 
@@ -1144,14 +1239,48 @@ baseline_data %>%
   filter(final_ID %in% manual_backchecks) %>%
   mutate(submission_date_dateonly = as.character(submission_date_dateonly)) %>%
   mutate(duration_mins = round(duration/60)) %>% 
-  dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, B7_phonenumber, audio)# %>%
-  #range_write(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
-  #            sheet = "Backchecks",
-  #            range = "A2",
-  #            reformat = F,
-  #            col_names = F)
+  dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, B7_phonenumber, audio) %>%
+  range_write(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+              sheet = "Backchecks",
+              range = "A2",
+              reformat = F,
+              col_names = F)
 
 ```
+
+### 2.6.1 Audio Audit Outcome Visualisation
+
+```{r}
+
+# Read in all audits/backchecks
+regular_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Regular_Audio_Audits")
+manual_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Manual_Audio_Audits")
+backchecks <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Backchecks")
+
+all_checks_outcomes <- data.frame(rbind(cbind(regular_audio_audits$en_name, regular_audio_audits$SubmissionDate,regular_audio_audits$`Final Outcome (Box Ticking)`),
+                             cbind(manual_audio_audits$en_name, manual_audio_audits$SubmissionDate, manual_audio_audits$`Final Outcome (Box Ticking)`),
+                             cbind(backchecks$en_name, backchecks$SubmissionDate, backchecks$`Final Outcome (Box Ticking)`)))
+colnames(all_checks_outcomes) <- c("en_name", "Date", "Outcome")
+all_checks_outcomes$Date <- as_date(all_checks_outcomes$Date)
+
+
+plot <- ggplot(all_checks_outcomes) +
+  geom_point(aes(x = Date, y = en_name, colour = Outcome)) +
+  scale_color_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
+  theme_minimal()
+ggplotly(plot)
+
+plot <- ggplot(all_checks_outcomes) +
+  geom_bar(aes(x = Date, y = en_name, fill = Outcome), stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
+  theme_minimal()
+ggplotly(plot)
+
+```
+
 
 ## 2.7 Cookied Image Check - Pipeline
 
@@ -1607,19 +1736,3 @@ baseline_data %>%
   summarise(mean_upload_delay_mins = mean(upload_delay_mins))
 
 ```
-
-
-# ------ Hairdressers ------ 
-
-Keep track of recruitment progress to cross-check with Isaacs tracking (and vice versa)
-Forecast recruitment timeline
-What are the geolocations of the hairdressers?
-
-How many per FO
--Recruits
--Duration distribution of recruitment survey
--Breakdown of Demographics (check for imbalances)
--Outliers, “don’t know” patterns, + tbd
--Match with Hairdressers (who is (not) ineligible). What is the rate of ineligibility?
-
-
