@@ -1,0 +1,88 @@
+---
+title: "VCF - HFC - Hairdresser Recruitment"
+author: "Jonathan Karl"
+date: "2024-02-01"
+output: html_document
+---
+
+## Setup
+
+```{r}
+
+# Clean the environment
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "lubridate", "stringdist", "igraph")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+## ------Hairdresser Recruitment Data------
+
+### Read Data
+
+```{r}
+
+# Read data
+hair_recruit_data <- read.csv("Raw Data/Hairdresser Recruitment/Recruitment Script - Hairdressers V2_WIDE.csv")
+
+# Fix the Stupid Stata ""-issue and Dates
+hair_recruit_data[, sapply(hair_recruit_data, class) == 'character'][hair_recruit_data[, sapply(hair_recruit_data, class) == 'character'] == ""] <- NA
+
+# Format dates
+hair_recruit_data <- hair_recruit_data %>% 
+  mutate_at(c("SubmissionDate","starttime","endtime"), as_datetime, format = "%d.%m.%Y %H:%M:%S")
+
+hair_recruit_data$submission_week <- floor_date(hair_recruit_data$SubmissionDate, "weeks", week_start = 1)
+hair_recruit_data$submission_date_dateonly <- floor_date(hair_recruit_data$SubmissionDate, "day")
+
+# Duration and Z scores
+hair_recruit_data <- hair_recruit_data %>% mutate(zscore_duration = (duration - mean(duration))/sd(duration))
+
+# Retain only responses where the participant consented
+hair_recruit_data <- hair_recruit_data %>% 
+  filter(consent_v2 == 1)
+
+# Filter for Main Recruitment
+hair_recruit_data <- hair_recruit_data %>% filter(SubmissionDate >= as_datetime("2024-01-25 00:00:00"))
+
+```
+
+### Regular Audio Audits
+
+```{r}
+#################### Audit 25 additional surveys per week
+
+# Find out the last date that was uploaded and then filter for dates larger than that.
+regular_audits_so_far <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+           sheet = "Regular_Audit_Hair_Recruitment")
+
+set.seed(42)
+temp_df2 <- hair_recruit_data %>%
+  filter(!is.na(audio)) %>% 
+  filter(submission_date_dateonly > max(as_date(regular_audits_so_far$SubmissionDate) + day(1))) %>% 
+  mutate(submission_date_dateonly = as.character(submission_date_dateonly)) %>%
+  mutate(duration_mins = round(duration/60)) %>% 
+  group_by(submission_date_dateonly) %>% 
+  slice_sample(n = 5) %>% 
+  dplyr::select(final_survey_ID, pull_hairdresser_ID, submission_date_dateonly, duration_mins, en_name, county_name_work, B1_name, audio) # Could add filter for IDs in manul audits
+
+range_write(temp_df2, 
+            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+            sheet = "Regular_Audit_Hair_Recruitment",
+            range = paste0("A",nrow(regular_audits_so_far)+2),
+            reformat = F,
+            col_names = F)
+```
+
