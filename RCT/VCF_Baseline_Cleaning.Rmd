@@ -11,13 +11,15 @@ editor_options:
 ## Setup
 
 ```{r}
+
+# Clean the environment
 rm(list = ls())
 
 # Prevent scientific notation
 knitr::opts_knit$set(options(scipen=999))
 
 # Install and load all the packages that will be used for analysis
-pkgs <- c("tidyverse", "googlesheets4", "lubridate", "stringdist")
+pkgs <- c("tidyverse", "googlesheets4", "lubridate", "stringdist", "igraph")
 
 miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
 if(length(miss_pkgs)>0){
@@ -29,7 +31,9 @@ invisible(lapply(pkgs,library,character.only=TRUE))
 rm(miss_pkgs, pkgs)
 ```
 
-## Read Survey Data
+## ------Baseline Survey Data------
+
+### Read Data
 
 ```{r}
 
@@ -79,9 +83,9 @@ baseline_data <- baseline_data %>% filter(B0_cluster != 248)
 
 ```
 
-## Re-Organise Variables
+### Re-Organise Variables
 
-### 1. Clean the randomised questions
+#### 1. Clean the randomised questions
 
 ```{r}
 
@@ -137,9 +141,9 @@ baseline_data[old_manipulation_var_names] <- NULL
 
 ```
 
-## Filter Data
+### Filter Data
 
-### 1. Correct survey versions
+#### 1. Correct survey versions
 
 ```{r}
 
@@ -156,7 +160,7 @@ baseline_data <- baseline_data %>%
 
 ```
 
-### 2. Eligibility Criteria
+#### 2. Eligibility Criteria
 
 Look at those who answered the first question in the baseline and check if they are actually eligible.
 If they are not, there is an error in the survey.
@@ -200,7 +204,7 @@ baseline_data <- baseline_data[eligible,]
 
 ```
 
-### 3. Unique SurveyID
+#### 3. Unique SurveyID
 
 ```{r}
 
@@ -225,9 +229,9 @@ sum(duplicated(baseline_data$final_ID))
 
 ```
 
-## Manually edit data
+### Manually edit data
 
-### 1. Mislabelled Clusters
+#### 1. Mislabelled Clusters
 
 ```{r}
 
@@ -246,7 +250,6 @@ relabel_clusters <- function(finalids, correct_cluster){
   # Adjust treatment group
   baseline_data[baseline_data$final_ID %in% finalids, ]$cluster_treatment_group <<- correct_cluster_treatment_group
 }
-
 
 
 relabel_clusters(c("98197Dec9171002", "76186Dec9123254", "77103Dec9105523", "84166Dec9134533", "13193Dec9154005", "44173Dec9144909", "20185Dec8174959", "77181Dec8164121", "38171Dec8154903", "42152Dec8133125", "44147Dec8114606", "39177Dec9113313"), 428)
@@ -282,7 +285,7 @@ relabel_clusters(c("67105Dec15104756", "64199Nov1141133"), 97)
 #c("39177Dec9113313") %in% baseline_data$final_ID
 ```
 
-### 2. Remove Fradulent Data
+#### 2. Remove Fradulent Data
 
 ```{r}
 table(baseline_data[baseline_data$en_name == "Ruth Wanjiru Ndungu",]$B0_cluster)
@@ -293,7 +296,7 @@ baseline_data %>%
   arrange(B0_cluster)
 ```
 
-### 3. Manually adjust FO mistakes
+#### 3. Manually adjust FO mistakes
 
 ```{r}
 
@@ -303,7 +306,7 @@ baseline_data[baseline_data$final_ID %in% c("24170Nov20092513"), ]$county_name_f
 
 ```
 
-### 4. Update new Hairdresser Information acquired post survey
+#### 4. Update new Hairdresser Information acquired post survey
 
 ```{r}
 
@@ -359,7 +362,7 @@ for(i in hairdresser_additional_info[additional_info_idx,]$final_ID){
 
 ```
 
-### 5. Secondary Phone Number Unification
+#### 5. Secondary Phone Number Unification
 
 --\> Ensuring every unique secondary phone number is matched to only 1 primary phone number
 
@@ -440,7 +443,7 @@ baseline_data$B14_hairdresserlocation[baseline_data$B11a_phonenumber == 72288831
 ```
 
 
-### 6. Detecting Typos in Phone Numbers
+#### 6. Detecting Typos in Phone Numbers
 
 ```{r}
 
@@ -512,7 +515,7 @@ for(i in unique_primary_phone_numbers){
 
 ```
 
-##### 6.1 Fix
+#### 7. Merge typos into unique phone numbers
 
 ```{r}
 
@@ -535,7 +538,6 @@ baseline_data[baseline_data$B11a_phonenumber == "700000000" & !is.na(baseline_da
 baseline_data[baseline_data$B11a_phonenumber == "700000000" & !is.na(baseline_data$B11a_phonenumber),]$B11a_phonenumber <- NA
 
 ```
-
 
 ```{r}
 typo_detection_sheet <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=1106637800",
@@ -574,44 +576,529 @@ for(i in 1:nrow(typo_detection_sheet)){
 
 ```
 
-
-
-### 7. Manually matching hairdressers based on locations that don't have phone numbers
+#### 8. Manually matching hairdressers based on locations that don't have phone numbers
 
 ```{r}
 
 # Extract all IDs where no phone number for the hairdresser was provided
 
-baseline_data[baseline_data$B11_phonenumber_check == 0 | is.na(baseline_data$B11a_phonenumber),] %>% 
-  arrange(county_name, B0_cluster, submission_date_dateonly) %>% 
-  dplyr::select(final_ID, en_name, county_name, B0_cluster, B13_hairdressername, B13_hairdresser_nickname, B14_hairdresserlocation) %>% 
-  range_write(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", 
-              sheet = "Matching_Hairdressers_without_phonenumbers", 
-              range = "A2", 
-              col_names = F, 
-              reformat = F)
-  
-
-# Upload all other responses to enable effective command+f work
-baseline_data[baseline_data$B11_phonenumber_check == 1  | !is.na(baseline_data$B11a_phonenumber),] %>% 
-  arrange(county_name, B0_cluster, submission_date_dateonly) %>% 
-  dplyr::select(final_ID, en_name, county_name, B0_cluster, B13_hairdressername, B13_hairdresser_nickname, B14_hairdresserlocation) %>% 
-  range_write(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", 
-              sheet = "Matching_Hairdressers_without_phonenumbers", 
-              range = paste0("A",sum(baseline_data$B11_phonenumber_check == 0 | is.na(baseline_data$B11a_phonenumber))+3), 
-              col_names = F, 
-              reformat = F)
-
+#baseline_data[baseline_data$B11_phonenumber_check == 0 | is.na(baseline_data$B11a_phonenumber),] %>% 
+#  arrange(county_name, B0_cluster, submission_date_dateonly) %>% 
+#  dplyr::select(final_ID, en_name, county_name, B0_cluster, B13_hairdressername, B13_hairdresser_nickname, B14_hairdresserlocation) %>% 
+#  range_write(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", 
+#              sheet = "Matching_Hairdressers_without_phonenumbers", 
+#              range = "A2", 
+#              col_names = F, 
+#              reformat = F)
+#  
+#
+## Upload all other responses to enable effective command+f work
+#baseline_data[baseline_data$B11_phonenumber_check == 1  | !is.na(baseline_data$B11a_phonenumber),] %>% 
+#  arrange(county_name, B0_cluster, submission_date_dateonly) %>% 
+#  dplyr::select(final_ID, en_name, county_name, B0_cluster, B13_hairdressername, B13_hairdresser_nickname, B14_hairdresserlocation) %>% 
+#  range_write(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", 
+#              sheet = "Matching_Hairdressers_without_phonenumbers", 
+#              range = paste0("A",sum(baseline_data$B11_phonenumber_check == 0 | is.na(baseline_data$B11a_phonenumber))+3), 
+#              col_names = F, 
+#              reformat = F)
 
 ```
 
-
-## Export
+#### 9. Remove fraudulent data
 
 ```{r}
-# Export cleaned Data
-write.csv(baseline_data, "Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
 
-test <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+# Read in all audits/backchecks
+regular_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Regular_Audio_Audits")
+manual_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Manual_Audio_Audits") %>% 
+  filter(!is.na(audio))
+backchecks <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Backchecks")
+
+
+# overview table
+all_checks_outcomes <- data.frame(rbind(cbind(regular_audio_audits$en_name, regular_audio_audits$SubmissionDate,regular_audio_audits$`Final Outcome (Box Ticking)`), cbind(manual_audio_audits$en_name, manual_audio_audits$SubmissionDate, manual_audio_audits$`Final Outcome (Box Ticking)`), cbind(backchecks$en_name, backchecks$SubmissionDate, backchecks$`Final Outcome (Box Ticking)`)))
+colnames(all_checks_outcomes) <- c("en_name", "Date", "Outcome")
+all_checks_outcomes$Date <- as_date(all_checks_outcomes$Date)
+all_checks_outcomess <- all_checks_outcomes %>% arrange(en_name, Date)
+
+# Decision Matrix
+decision_matrix <- data.frame(rbind(cbind(regular_audio_audits$final_ID, regular_audio_audits$`Final Outcome (Box Ticking)`),
+cbind(manual_audio_audits$final_ID, manual_audio_audits$`Final Outcome (Box Ticking)`),
+cbind(backchecks$final_ID, backchecks$`Final Outcome (Box Ticking)`)))
+colnames(decision_matrix) <- c("Final_ID", "Outcome")
+
+# Prep IDs to remove
+id_to_remove <- decision_matrix$Final_ID[decision_matrix$Outcome == "Fraud" & !is.na(decision_matrix$Outcome)]
+# Remove final_ID
+baseline_data <- baseline_data[!(baseline_data$final_ID %in% id_to_remove),]
 
 ```
+
+#### 10. Attaching unique IDs to all hairdressers
+
+##### 10.1 Based on cleaned phone numbers
+
+```{r}
+### Last cleaning of phone numbers
+
+# First remove all phone number entries that contain 7000000
+baseline_data[baseline_data$B11a_phonenumber == "0" & !is.na(baseline_data$B11a_phonenumber),]$B11_phonenumber_check <- 0
+baseline_data[baseline_data$B11a_phonenumber == "0" & !is.na(baseline_data$B11a_phonenumber),]$B11a_phonenumber_double <- NA
+baseline_data[baseline_data$B11a_phonenumber == "0" & !is.na(baseline_data$B11a_phonenumber),]$B11a_phonenumber <- NA
+
+```
+
+
+```{r}
+
+# Based on cleaned phone numbers, assign an initial ID
+baseline_data_new <- baseline_data %>% 
+  #filter(cluster_treatment_group %in% c("Offline_Only", "Online_Offline")) %>% 
+  group_by(B11a_phonenumber) %>%
+  mutate(hairdresser_ID = cur_group_id())
+
+# Remove the ID for all those that don't have a phone number
+if(length(table(baseline_data_new$hairdresser_ID[is.na(baseline_data_new$B11a_phonenumber)])) == 1){
+  baseline_data_new$hairdresser_ID[is.na(baseline_data_new$B11a_phonenumber)] <- NA
+}
+
+```
+
+##### 10.2 Match the hairdressers without phone numbers to each other or to hairdressers with phone numbers
+
+```{r}
+
+# Match the hairdressers without phone numbers either to each other or to hairdressers with phone numbers
+matching_hairdressers_nodirections <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=2120687644",
+           sheet = "Matching_Hairdressers_without_phonenumbers")
+colnames(matching_hairdressers_nodirections)[10] <- "suspected_match_IDs"
+
+#unique(matching_hairdressers_nodirections$final_ID[!(matching_hairdressers_nodirections$final_ID %in% baseline_data_new$final_ID)])
+
+########################## Prep the Matrix and ensure all common hairdresser IDs share a 1
+
+# Initialise the matrix
+network_matrix <- matrix(data = 0, nrow = nrow(baseline_data_new), ncol = nrow(baseline_data_new), dimnames = list(row_names = baseline_data_new$final_ID, col_names = baseline_data_new$final_ID))
+
+# Create a named vector for quick ID lookup, excluding NAs
+valid_entries <- !is.na(baseline_data_new$hairdresser_ID)
+id_mapping <- setNames(baseline_data_new$hairdresser_ID[valid_entries], baseline_data_new$final_ID[valid_entries])
+
+# Initialize progress bar
+total_iterations <- length(unique(id_mapping))
+id_count <- 1
+pb <- txtProgressBar(min = id_count, max = total_iterations, style = 3)
+
+# Iterate over unique IDs
+for (id in id_mapping) {
+  
+  # Update progress bar
+  setTxtProgressBar(pb, id_count)
+  
+  # Find rows and columns that match this id
+  rows <- names(id_mapping)[id_mapping == id]
+  cols <- rows
+  
+  # Create a matrix index
+  mat_index <- expand.grid(rows, cols)
+  
+  # Filter out self-matching indices
+  mat_index <- subset(mat_index, Var1 != Var2)
+  
+  # Update network_matrix_try
+  if (nrow(mat_index) > 0) {
+    network_matrix[as.matrix(mat_index)] <- 1
+  }
+  
+  # Update progress
+  id_count <- id_count + 1
+}
+# Close progress bar
+close(pb)
+
+######################### Now add the matches for the 
+
+# Prep the matched hairdressers
+split_overlap_ids <- str_split(matching_hairdressers_nodirections$suspected_match_IDs, ",")
+split_trimmed_overlap_ids <- lapply(split_overlap_ids, str_trim)
+names(split_trimmed_overlap_ids) <- matching_hairdressers_nodirections$final_ID
+
+# Initialize progress bar
+total_iterations <- length(unique(id_mapping))
+id_count <- 1
+pb <- txtProgressBar(min = id_count, max = total_iterations, style = 3)
+
+# Run the loop
+for(i in names(split_trimmed_overlap_ids)){
+  
+  # Update progress bar
+  setTxtProgressBar(pb, id_count)
+  
+  # Check if the final_ID is actually in the dataset (some were removed due to fraud)
+  if(!(i %in% colnames(network_matrix))){
+    next
+  }
+  
+  # For some IDs there were no matches, skip to the next ID ifd that is the case, also remove all matches that don't exist anymore
+  matches <- split_trimmed_overlap_ids[[i]]
+  matches <- matches[!is.na(matches)]
+  matches <- matches[matches %in% colnames(network_matrix)]
+  
+  if(length(matches) > 0){
+    # Create a matrix index
+    mat_index <- rbind(expand.grid(i, matches), expand.grid(matches, i))
+
+    # Filter out self-matching indices
+    mat_index <- subset(mat_index, Var1 != Var2)
+    
+    if (nrow(mat_index) > 0) {
+    network_matrix[as.matrix(mat_index)] <- 1
+    }
+  }
+  id_count <- id_count + 1
+}
+# Close progress bar
+close(pb)
+
+##################################### Now look at the network graph
+
+
+# Create igraph object, names as vertex attributes directly included 
+hairdresser_network <- graph.adjacency(network_matrix, mode = "undirected")
+V(hairdresser_network)$hairdresser_ID <- baseline_data_new$hairdresser_ID
+V(hairdresser_network)$hairdresser_name <- baseline_data_new$B13_hairdressername
+V(hairdresser_network)$hairdresser_nickname <- baseline_data_new$B13_hairdresser_nickname
+V(hairdresser_network)$hairdresser_directions <- baseline_data_new$B14_hairdresserlocation
+V(hairdresser_network)$hairdresser_phone <- baseline_data_new$B11a_phonenumber
+V(hairdresser_network)$cluster_ID <- baseline_data_new$B0_cluster
+
+# Find vertices with a degree greater than 0
+v_subset <-  degree(hairdresser_network) > 0
+# Subset the network
+hairdresser_network_subset <- induced_subgraph(hairdresser_network, which(v_subset))
+
+# Find the connected components
+components <- components(hairdresser_network_subset)
+
+# Number of components
+n_components <- length(components$membership)
+
+# Loop over each component
+#google_row <- 2
+google_df <- data.frame()
+for (i in 1:max(components$membership)) {
+    # Extract the subgraph corresponding to the ith component
+    subgraph <- induced_subgraph(hairdresser_network_subset, which(components$membership == i))
+    
+    # Number of vertices in the component
+    num_vertices <- vcount(subgraph)
+    
+    # Number of edges that a complete graph would have
+    num_edges_complete_graph <- num_vertices * (num_vertices - 1) / 2
+    
+    # Check if the number of edges in the component equals that of a complete graph
+    if (ecount(subgraph) == num_edges_complete_graph) {
+      #print(paste("Component", i, "is a complete graph."))
+    } else {
+      print(paste("Component", i, "is not a complete graph."))
+      
+      google_df_new <- data.frame(Component = i, 
+                              Vertices = paste0(names(V(subgraph)), " (",V(subgraph)$hairdresser_ID, ")", collapse = ", "),
+                              IDs = paste0(names(V(subgraph)), collapse = ", "),
+                              Info = paste0(names(V(subgraph)), " -- Phone: ", V(subgraph)$hairdresser_phone, "\n",
+                                            "Name: ", V(subgraph)$hairdresser_name, " -- ", 
+                                            "Nickname: ", V(subgraph)$hairdresser_nickname, "\n",
+                                            "Cluster_ID: ", V(subgraph)$cluster_ID, " -- ",
+                                            "Directions: ", V(subgraph)$hairdresser_directions, "\n\n",
+                                            collapse = ""))
+      google_df <- rbind(google_df, google_df_new)
+      # google_row <- google_row + 1
+      
+      #plot(main = paste("Component", i), subgraph, edge.width = 0.5,  vertex.size = degree(subgraph),  vertex.label.cex = 1)
+    }
+}
+range_write(google_df,
+                  ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
+                  sheet = "Network_Analysis",
+                  range = "A2",
+                  reformat = F,
+                  col_names = F)
+
+
+```
+
+##### 10.3 Assign fresh IDs to newly matched hairdressers
+
+```{r}
+
+# Match the hairdressers without phone numbers either to each other or to hairdressers with phone numbers
+matching_hairdressers_network_analysis <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=2120687644",
+           sheet = "Network_Analysis")
+
+current_max <- max(baseline_data_new$hairdresser_ID, na.rm = T)
+for(i in 1:nrow(matching_hairdressers_network_analysis)){
+  
+  for(hair in 1:unlist(matching_hairdressers_network_analysis[i,"Number_Distinct_Hairdressers"])){
+    
+    column <- paste0("Hairdresser_", hair)
+    current_ids <- unlist(str_split(matching_hairdressers_network_analysis[i,column, drop = T], ", "))
+    
+    # Assign new hairdresser ID to these hairdressers
+    baseline_data_new[baseline_data_new$final_ID %in% current_ids,]$hairdresser_ID <- current_max+1
+    
+    current_max <- max(baseline_data_new$hairdresser_ID, na.rm = T)
+  }
+}
+
+```
+
+##### 10.4 Assign IDs to all remaining hairdressers
+
+```{r}
+
+# Compute max ID
+current_max <- max(baseline_data_new$hairdresser_ID, na.rm = T)
+number_hairdressers_left <- sum(is.na(baseline_data_new$hairdresser_ID))
+
+# Assign fresh unique IDs to all these hairdressers
+baseline_data_new[is.na(baseline_data_new$hairdresser_ID),]$hairdresser_ID <- (current_max+1):(current_max+number_hairdressers_left)
+
+```
+
+##### 10.5 Create a hairdresser database
+
+```{r}
+
+# New df to protect old
+baseline_data_new_ready_for_hairdresser_database <- baseline_data_new
+
+# Clean the variable B12a_alternativepn_who by attaching the labels
+map <- c("1" =	"Hairdresser/Beautician/Barber themselves", "2"	= "Friend of Hairdresser/Beautician/Barber", "3"	= "Saloon Owner", "4"	= "Relative of Hairdresser/Beautician/Barber", "77" = "A different  hairdresser")
+baseline_data_new_ready_for_hairdresser_database$B12a_alternativepn_who <- unname(map[baseline_data_new_ready_for_hairdresser_database$B12a_alternativepn_who])
+
+# Create hairdresser database
+hairdresser_database <- baseline_data_new_ready_for_hairdresser_database %>% 
+  group_by(hairdresser_ID) %>% 
+  summarise(response_final_IDs = paste(final_ID, collapse = ", "),
+            treatment_group = {
+              counts <- table(cluster_treatment_group)
+              summary_str <- paste(names(counts), " (", counts, ")", sep = "", collapse = ", ")
+              summary_str
+              },
+            county_name = {
+              counts <- table(county_name)
+              summary_str <- paste(names(counts), " (", counts, ")", sep = "", collapse = ", ")
+              summary_str
+              },
+            customers_per_hairdresser = n(),
+            cluster_ID = {
+              counts <- table(B0_cluster)
+              summary_str <- paste(names(counts), " (", counts, ")", sep = "", collapse = ", ")
+              summary_str
+              },
+            B11a_phonenumber = {
+              Y_no_NA <- na.omit(B11a_phonenumber)
+              counts <- table(Y_no_NA)
+              summary_str <- paste(names(counts), " (", counts, ")", sep = "", collapse = ", ")
+              summary_str
+              },
+            hairdresser_alternative_phonenumber = {
+              Y_no_NA <- na.omit(B12a_alternativepn)
+              counts <- table(Y_no_NA)
+              summary_str <- paste(names(counts), " (", counts, ")", sep = "", collapse = ", ")
+              summary_str
+              },
+            who_does_alternative_phone_belong = {
+              Y_no_NA <- na.omit(B12a_alternativepn_who)
+              counts <- table(Y_no_NA)
+              summary_str <- paste(names(counts), " (", counts, ")", sep = "", collapse = ", ")
+              summary_str
+              },
+            B13_hairdressername = str_remove_all(paste(B13_hairdressername, collapse = ", "), "NA, "),
+            B13_hairdresser_nickname = str_remove_all(paste(B13_hairdresser_nickname, collapse = ", "), "NA, "),
+            B14_hairdresserlocation = str_remove_all(paste("- ", B14_hairdresserlocation, collapse = "\n"), "NA\n"),
+            .groups = "drop") %>% 
+  filter(str_count(treatment_group, "Offline_Only|Online_Offline") > 0)
+
+```
+
+##### 10.6 Make the IDs less prone to error
+
+```{r}
+
+# Set seed to keep the randomness bloody constant
+set.seed(123)
+hairdresser_database_better_IDs <- hairdresser_database %>% 
+  mutate(hairdresser_ID = paste0(hairdresser_ID, sample(LETTERS), sample(0:9)))
+
+```
+
+##### 10.7 Remove hairdressers from the database that have overlap with online or control participants
+
+```{r}
+
+# Which participants to kick out?
+participants_to_kick_out_from_study <- unlist(str_split(hairdresser_database_better_IDs[str_count(hairdresser_database_better_IDs$treatment_group, "Online_Only|Control") > 0,]$response_final_IDs, ", "))
+
+# How does this affect cluster sizes? NOT TERRIBLE
+temp_1 <- baseline_data_new %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n())
+temp_2 <- baseline_data_new %>% 
+  filter(final_ID %in% participants_to_kick_out_from_study) %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) 
+left_join(temp_1, temp_2, by = "B0_cluster")
+  
+
+# Filter hairdresser database
+hairdresser_database_better_IDs_no_contamination <- hairdresser_database_better_IDs %>% 
+  filter(str_count(treatment_group, "Online_Only|Control") == 0)
+
+```
+
+##### 10.8 Order the hairdresser database by a) county and b) cluster (inverse of number of participants)
+
+```{r}
+
+# First figure out which are the dominant counties
+dominant_county <- unlist(lapply(lapply(str_extract_all(hairdresser_database_better_IDs_no_contamination$county_name, "(?<=\\().+?(?=\\))"), as.numeric), which.max))
+table(dominant_county)
+dominant_county_formatted <- str_trim(str_remove_all(substr(hairdresser_database_better_IDs_no_contamination$county_name, start = 1, stop = 8), "\\("))
+hairdresser_database_better_IDs_no_contamination$dominant_county <- dominant_county_formatted
+
+
+
+# Second figure out which are the dominant clusters per hairdresser to enable sorting
+dominant_cluster <- unlist(lapply(lapply(str_extract_all(hairdresser_database_better_IDs_no_contamination$cluster_ID, "(?<=\\().+?(?=\\))"), as.numeric), which.max))
+
+dominant_1 <- hairdresser_database_better_IDs_no_contamination$cluster_ID[which(dominant_cluster == 1)]
+dominant_1_formatted <- str_trim(str_remove_all(substr(dominant_1, start = 1, stop = 3), "\\("))
+
+dominant_2 <- hairdresser_database_better_IDs_no_contamination$cluster_ID[which(dominant_cluster == 2)]
+dominant_2_formatted <- str_trim(str_remove_all(substr(dominant_2, start = nchar(dominant_2)-7, stop = nchar(dominant_2)), "\\([0-9]*\\)"))
+
+hairdresser_database_better_IDs_no_contamination$dominant_cluster <- NA
+hairdresser_database_better_IDs_no_contamination$dominant_cluster[which(dominant_cluster == 1)] <- dominant_1_formatted
+hairdresser_database_better_IDs_no_contamination$dominant_cluster[which(dominant_cluster == 2)] <- dominant_2_formatted
+hairdresser_database_better_IDs_no_contamination$dominant_cluster <- as.numeric(hairdresser_database_better_IDs_no_contamination$dominant_cluster)
+
+
+
+# Then figure out how many participants per cluster to enable sorting clusters with fewer participants to the top
+clusters_n <- baseline_data_new %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) %>%
+  mutate(B0_cluster = as.character(B0_cluster), n = as.character(n))
+  #dplyr::select(n, B0_cluster)
+
+clusters_n_map <- deframe(clusters_n)
+cluster_n_mapped <- as.numeric(unname(clusters_n_map[as.character(hairdresser_database_better_IDs_no_contamination$dominant_cluster)]))
+hairdresser_database_better_IDs_no_contamination$cluster_n <- cluster_n_mapped
+
+
+# Create new data.frame
+hairdresser_database_better_IDs_no_contamination_ordered <- hairdresser_database_better_IDs_no_contamination %>% 
+  mutate(caregiver_sample_size_in_cluster = cluster_n, .after = 6) %>% 
+  arrange(dominant_county, caregiver_sample_size_in_cluster, dominant_cluster) %>% 
+  dplyr::select(-dominant_cluster, -cluster_n, -dominant_county)
+  
+
+```
+
+
+##### 10.9 Export Hairdresser Database
+
+```{r}
+#range_write(ss = "https://docs.google.com/spreadsheets/d/1ydO5FV0WPT0nsDh6kEWF32_TIP9KtX1qAUGc7DTOHSU/edit#gid=0", 
+#            data = hairdresser_database_better_IDs_no_contamination_ordered,
+#            range = "A1", 
+#            reformat = F)
+```
+
+### Export
+
+#### 1. Export csv of cleaned data 
+
+```{r}
+
+# Export cleaned Data
+write.csv(baseline_data_new, "Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+
+```
+
+#### 2. Export cleaned data to gsheets for SFOs
+
+```{r}
+
+baseline_data_new %>% 
+  dplyr::select(final_ID, B0_cluster, B1_name, B7_phonenumber, B7d_alternativephonnu, B11a_phonenumber, B12a_alternativepn, B13_hairdressername, B13_hairdresser_nickname, B14_hairdresserlocation) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1fvkPp2bIiu9enCtcCz9LRc6sSZVDFokDGJg4iEtdiHY/edit#gid=0",
+              range = "A1",
+              reformat = F,
+              col_names = T)
+  
+
+```
+
+
+#### 3. Creating a new Custom Audience
+
+```{r}
+
+# Primary Phone Number
+temp_1 <- baseline_data %>% 
+  filter(cluster_treatment_group %in% c("Online_Only", "Online_Offline")) %>% 
+  dplyr::select(B1_name, B7_phonenumber) %>% 
+  drop_na() %>% 
+  mutate(phone = paste("+254 ", as.character(B7_phonenumber))) %>% 
+  dplyr::select(phone, B1_name)
+
+# Alternative Phone Number
+temp_2 <- baseline_data %>% 
+  filter(cluster_treatment_group %in% c("Online_Only", "Online_Offline")) %>% 
+  dplyr::select(B1_name, B7d_alternativephonnu) %>% 
+  drop_na() %>% 
+  mutate(phone = paste("+254 ", as.character(B7d_alternativephonnu))) %>% 
+  dplyr::select(phone, B1_name)
+  
+
+rbind(temp_1,temp_2) %>% 
+  filter(!duplicated(phone)) %>% 
+  write.csv("Data Exports/Cookie_Link_Resend_Message.csv", row.names = F)
+
+```
+
+
+### Condensing
+
+We can't afford to move forward with all participants.
+
+#### 1. Fix input errors from FOs
+
+```{r}
+
+# survey  ID 6697B4 was keyed in twice by mistake. Please replace the one done earlier before 3pm to 6696H6.
+
+# In cluster 292 the field officer by the name Bernard Musili accidentally keyed two hairdressers using the same survey ID (7835B1) Discard Veronicah Wanjiru from the data
+
+```
+
+#### 2. Merge and Split Hairdressers
+
+```{r}
+
+# We had a case where Survey ID 6694P0 is being shared by two different respondents who should be independent
+
+# The following are duplicate IDs: 28B8 same person as 4577K1, 4822X2 same as 7588D0, 5976N4 same as 5124Q3
+
+
+merge_hairdressers <- function(){
+  
+}
+
+```
+
