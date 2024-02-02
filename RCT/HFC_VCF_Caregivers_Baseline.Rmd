@@ -8,6 +8,8 @@ output: html_document
 # Setup
 
 ```{r}
+
+# Clean the environment
 rm(list = ls())
 
 # Prevent scientific notation
@@ -1135,7 +1137,7 @@ unaudited_df <- baseline_data %>%
   sample_n(2) %>% 
   mutate(row_num = row_number()) %>% 
   filter(row_num <= map_dbl(en_name, ~ current_audit_state_vec[.x])) %>%
-  select(-row_num)
+  dplyr::select(-row_num)
 
 # Add more audits for those that were dismissed or temporarily suspended to establish consistency over time of their behaviour or identify when it started/stopped to delete data in an informed way
 
@@ -1174,7 +1176,7 @@ sample_more_audits <- function(fo_name, n){
     mutate(submission_date_dateonly = as_date(submission_date_dateonly)) %>% 
     filter(submission_date_dateonly < fo_date_range_bad_detected[1] | submission_date_dateonly > fo_date_range_bad_detected[2]) %>% 
     filter(!is.na(audio)) %>% 
-    select(final_ID, submission_date_dateonly) %>% 
+    dplyr::select(final_ID, submission_date_dateonly) %>% 
     sample_n(n)
   
   return(temp$final_ID)
@@ -1211,9 +1213,13 @@ temp_df2 <- baseline_data %>%
   mutate(duration_mins = round(duration/60)) %>% 
   dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, audio)
 
-# Order properly
-temp_df2 <- temp_df2[match(manual_audio_audits, temp_df2$final_ID),]
+manual_audio_audits[64]
 
+manual_audio_audits %in% temp_df2$final_ID
+
+# Order properly
+temp_df2 <- temp_df2[match(manual_audio_audits, temp_df2$final_ID),] 
+temp_df2 <- temp_df2[!is.na(temp_df2$final_ID),]
 
 range_write(data = temp_df2, 
             ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
@@ -1256,7 +1262,8 @@ baseline_data %>%
 regular_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
            sheet = "Regular_Audio_Audits")
 manual_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
-           sheet = "Manual_Audio_Audits")
+           sheet = "Manual_Audio_Audits") %>% 
+  filter(!is.na(audio))
 backchecks <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
            sheet = "Backchecks")
 
@@ -1264,20 +1271,41 @@ all_checks_outcomes <- data.frame(rbind(cbind(regular_audio_audits$en_name, regu
                              cbind(manual_audio_audits$en_name, manual_audio_audits$SubmissionDate, manual_audio_audits$`Final Outcome (Box Ticking)`),
                              cbind(backchecks$en_name, backchecks$SubmissionDate, backchecks$`Final Outcome (Box Ticking)`)))
 colnames(all_checks_outcomes) <- c("en_name", "Date", "Outcome")
-all_checks_outcomes$Date <- as_date(all_checks_outcomes$Date)
+
+# Convert Date to a factor for stacking in ggplot
+all_checks_outcomes$Date <- as.factor(all_checks_outcomes$Date)
 
 
-plot <- ggplot(all_checks_outcomes) +
-  geom_point(aes(x = Date, y = en_name, colour = Outcome)) +
-  scale_color_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
+# Create the ggplot stacked bar chart
+ggplot(all_checks_outcomes) +
+  geom_bar(aes(x = en_name, fill = Outcome), stat = "count", position = "stack") +
+  facet_grid(~ Date) +
+  labs(y = "Entity Name", x = "Count", fill = "Outcome") +
   theme_minimal()
-ggplotly(plot)
 
-plot <- ggplot(all_checks_outcomes) +
+
+ggplot(all_checks_outcomes[order(all_checks_outcomes$Date,decreasing=T),]) +
   geom_bar(aes(x = Date, y = en_name, fill = Outcome), stat = "identity", position = "stack") +
   scale_fill_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
   theme_minimal()
+
+plot <- all_checks_outcomes %>% 
+  arrange(desc(Date)) %>% 
+  mutate(Date = str_remove_all(as.character(Date), "-"), Date = as.numeric(Date), Date = as.factor(Date)) %>%
+  ggplot() +
+  geom_bar(aes(x = en_name, y = Date, fill = Outcome), stat = "identity") +
+  scale_fill_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
+  theme_minimal() +
+  coord_flip()
 ggplotly(plot)
+
+plot <- ggplot(all_checks_outcomes) +
+  geom_point(aes(x = Date, y = en_name, color = Outcome)) +
+  scale_color_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+ggplotly(plot)
+
 
 ```
 
@@ -1304,14 +1332,6 @@ range_write(cookies_tobe_verified,
 ```
 
 # 3. Tracking recruitment
-
-## 3.1 How are refusal rates (non-consenting) by FO, by cluster, by county
-
-```{r}
-#B0_county
-#B0_cluster
-#enum
-```
 
 ## 3.2 Keep track of recruitment progress to cross-check with Isaacs tracking (and vice versa)
 
@@ -1365,7 +1385,7 @@ baseline_data %>%
 
 ## 3.3 Forecast recruitment timeline
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 
 temp_data <- baseline_data %>% 
   group_by(submission_date_dateonly) %>% 
@@ -1411,10 +1431,10 @@ baseline_data %>%
 
 
 as_date("2023-11-01") + 180
+
 ```
 
 ```{r}
-
 
 ############################################### COMPUTE AVERAGE DAILY OUTPUT BY CLUSTER
 
@@ -1554,13 +1574,13 @@ average_output_and_currents_and_targets$optimised_final_fo_days_over_under <- te
 average_output_and_currents_and_targets$predicted_percentage_target_completion <- average_output_and_currents_and_targets$optimised_outcome_n/average_output_and_currents_and_targets$target_n
 
 # Export to Googlesheets
-average_output_and_currents_and_targets %>% 
-  dplyr::select(B0_cluster, average_responses_by_cluster_by_fo, group, target_n, n, optimised_fo_days_deployed,optimised_outcome_n, optimised_outcome_n) %>% 
-  range_write(ss = "https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=824952358",
-              sheet = "[V3 - new] Optimising FO Allocation",
-              range = "A2",
-              col_names = F,
-              reformat = F)
+#average_output_and_currents_and_targets %>% 
+#  dplyr::select(B0_cluster, average_responses_by_cluster_by_fo, group, target_n, n, optimised_fo_days_deployed,optimised_outcome_n, #optimised_outcome_n) %>% 
+#  range_write(ss = "https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=824952358",
+#              sheet = "[V3 - new] Optimising FO Allocation",
+#              range = "A2",
+#              col_names = F,
+#              reformat = F)
 
 ```
 
@@ -1592,7 +1612,6 @@ survey_locations %>%
 
 # Summary Stats on Duration in Minutes 
 temp_df <- baseline_data %>% 
-  filter(submission_date_dateonly >= as_date("2023-11-23")) %>% 
   group_by(en_name) %>% 
   summarise(duration_mean = round(mean(duration/60)), 
             duration_median = round(median(duration/60)),
@@ -1662,7 +1681,7 @@ temp_df
 
 # How often does this happen per FO
 arbitrary_responses_df %>%
-  filter(baseline_data$submission_date_dateonly >= "2023-11-23") %>% 
+  #filter(baseline_data$submission_date_dateonly >= "2023-11-23") %>% 
   group_by(en_name) %>% 
   summarise(mean_number_groups_single_response = mean(number_groups_single_resp),
           mean_share_groups_single_response = mean(share_groups_single_resp)) %>% 
@@ -1736,3 +1755,123 @@ baseline_data %>%
   summarise(mean_upload_delay_mins = mean(upload_delay_mins))
 
 ```
+
+## 4.7 Deciding which FOs to keep
+
+### Performance - Quantiy 
+
+```{r}
+
+# Recruits per FO
+en_performance_quantity <- baseline_data %>% 
+  group_by(en_name) %>% 
+  summarise(number_completed_surveys = n()) %>% 
+  arrange(number_completed_surveys)
+
+```
+
+### Performance - Quality Audited
+
+```{r}
+
+# Read in all audits/backchecks
+regular_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Regular_Audio_Audits")
+manual_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Manual_Audio_Audits") %>% 
+  filter(!is.na(audio))
+backchecks <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Backchecks")
+
+
+# overview table
+all_checks_outcomes <- data.frame(rbind(cbind(regular_audio_audits$en_name, regular_audio_audits$SubmissionDate,regular_audio_audits$`Final Outcome (Box Ticking)`), cbind(manual_audio_audits$en_name, manual_audio_audits$SubmissionDate, manual_audio_audits$`Final Outcome (Box Ticking)`), cbind(backchecks$en_name, backchecks$SubmissionDate, backchecks$`Final Outcome (Box Ticking)`)))
+colnames(all_checks_outcomes) <- c("en_name", "Date", "Outcome")
+all_checks_outcomes$Date <- as_date(all_checks_outcomes$Date)
+all_checks_outcomess <- all_checks_outcomes %>% arrange(en_name, Date)
+
+# Which FOs to keep for the remainder of VCF
+fos_that_cheated <- unique(all_checks_outcomes$en_name[all_checks_outcomes$Outcome == "Fraud" & !is.na(all_checks_outcomes$Outcome)])
+
+en_performance_quality_audited <- all_checks_outcomes %>% 
+  filter(!(en_name %in% fos_that_cheated)) %>% 
+  group_by(en_name, Outcome) %>% 
+  summarise(n = n()) %>% 
+  mutate(score = case_when(Outcome == "All good" ~ n*1,
+                           Outcome == "Poor Quality (not fraud)" ~ n*-1,
+                           Outcome == "Fraud" ~ -Inf)) %>% 
+  summarise(audit_score = sum(score, na.rm = T)) %>% 
+  arrange(desc(audit_score))
+
+
+en_performance_quality_audited_additional <- all_checks_outcomes %>% 
+  filter(en_name %in% c("Ruth Kilobi", "Benjamin Thoge", "Esther Adhiambo")) %>% 
+  group_by(en_name, Outcome) %>% 
+  summarise(n = n()) %>% 
+  mutate(score = case_when(Outcome == "All good" ~ n*1,
+                           Outcome == "Poor Quality (not fraud)" ~ n*-1,
+                           Outcome == "Fraud" ~ -3)) %>% 
+  summarise(audit_score = sum(score, na.rm = T)) %>% 
+  arrange(desc(audit_score))
+
+en_performance_quality_audited <- rbind(en_performance_quality_audited, en_performance_quality_audited_additional)
+  
+```
+
+### Performance - Duration
+
+```{r}
+
+# How often did they conduct a survey below 20 minutes
+performance_too_short <- baseline_data %>% 
+  group_by(en_name) %>% 
+  summarise(below_20min = mean(duration/60 < 20)) %>% 
+  arrange(desc(below_20min))
+
+```
+
+### Performance - Arbitrary Responses
+
+```{r}
+
+# How many responses were exactly the same across groups
+performance_arbitrary <- arbitrary_responses_df %>%
+  group_by(en_name) %>% 
+  summarise(mean_number_groups_single_response = mean(number_groups_single_resp),
+          mean_share_groups_single_response = mean(share_groups_single_resp)) %>% 
+  arrange(desc(mean_number_groups_single_response))
+
+```
+
+### Final
+
+```{r}
+
+which_fos_to_keep <- purrr::reduce(list(en_performance_quality_audited, en_performance_quantity, performance_too_short, performance_arbitrary),dplyr::left_join, by = 'en_name')
+  
+final_score <- which_fos_to_keep %>% 
+  mutate_at(c("number_completed_surveys", "audit_score", "below_20min", "mean_number_groups_single_response", "mean_share_groups_single_response"), ~(scales::rescale(.) %>% as.vector)) %>% 
+  mutate(final_score = (number_completed_surveys + audit_score - below_20min - mean_share_groups_single_response), .after = 1) %>% 
+  arrange(desc(final_score)) %>% 
+    pull(final_score)
+
+which_fos_to_keep %>% 
+  mutate(final_score = round(final_score*100)) %>%
+  mutate(share_surveys_below_20mins = paste0(round(below_20min*100), "%")) %>% 
+  mutate(mean_share_qgroups_abitrary_response = paste0(round(mean_share_groups_single_response*100), "%")) %>% 
+  dplyr::select(en_name, final_score, number_completed_surveys, audit_score, share_surveys_below_20mins, mean_share_qgroups_abitrary_response) %>% 
+  arrange(desc(final_score)) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1ZjbIw7ThtvJC62DjnaFPHUCF23g5vtHyZkozlAypdvE/edit#gid=0",
+              reformat = F,
+              col_names = F,
+              range = "A2")
+  
+
+```
+
+```{r}
+baseline_data %>% 
+  group_by(cluster_treatment_group, B0_cluster) %>% 
+  summarise(n = n())
+```
+
