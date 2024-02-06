@@ -86,3 +86,334 @@ range_write(temp_df2,
             col_names = F)
 ```
 
+### Merge duplicates in hairdresser database
+
+#### 1. Read Data
+
+##### 1.1 Read and Clean Hairdresser Recruitment Tracker
+
+```{r}
+
+# Read hairdresser recruitment tracker
+hair_recruitment_tracker <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1ydO5FV0WPT0nsDh6kEWF32_TIP9KtX1qAUGc7DTOHSU/edit#gid=0", 
+           sheet = "Hairdressers_List")
+
+#hair_recruitment_tracker %>% group_by(`Survey Status`) %>% summarise(n = n())
+
+# Filter for the Duplicates
+filter_vec <- !is.na(hair_recruitment_tracker$Comment) & hair_recruitment_tracker$`Survey Status` == "Duplicate(Appear more than once)" & !is.na(hair_recruitment_tracker$`Survey Status`)
+duplicates_comments <- hair_recruitment_tracker$Comment[filter_vec]
+duplicates_original_IDs <- hair_recruitment_tracker$hairdresser_ID[filter_vec]
+
+# Name the vector by the original ID
+names(duplicates_comments) <- duplicates_original_IDs
+unname(duplicates_comments) # Print it to look at it manually
+
+# Extract the IDs that are specified to be duplicated
+duplicate_ids_proxy <- str_extract_all(duplicates_comments, "[0-9]{1,4}[A-Z]{1}[0-9]{1}")
+names(duplicate_ids_proxy) <- duplicates_original_IDs
+
+# Check if there is any comments of duplicates where you can't find any IDs?
+duplicate_comments_empty <- sapply(duplicate_ids_proxy, length) == 0
+if(sum(duplicate_comments_empty) != 0){
+  print("Some comments of duplicate hairdresser don't specify which hairdressers they are duplicates of. See below:")
+  duplicates_original_IDs[duplicate_comments_empty]
+} else { print("There is an ID found in every comment.") }
+
+share_ids_real <- mean(unlist(duplicate_ids_proxy) %in% hair_recruitment_tracker$hairdresser_ID)
+if(share_ids_real != 1){
+  print("Not all IDs in the comments are real IDs. See below: ")
+  unlist(duplicate_ids_proxy)[!(unlist(duplicate_ids_proxy) %in% hair_recruitment_tracker$hairdresser_ID)]
+} else { print("All IDs in the comments are real.") }
+
+
+```
+
+##### 1.2 Read hairdresser database
+
+```{r}
+
+# Read data
+hairdresser_database_v1 <- read.csv("Data Exports/vcf2_hairdresser_database_v1.csv")
+
+```
+
+#### 2. Network Analysis
+
+##### 2.1 Verfiy that the duplicates are exhaustively documented
+
+```{r}
+
+# Set up Network
+network_matrix <- matrix(data = 0, nrow = nrow(hair_recruitment_tracker), ncol = nrow(hair_recruitment_tracker), dimnames = list(row_names = hair_recruitment_tracker$hairdresser_ID, col_names = hair_recruitment_tracker$hairdresser_ID))
+for(i in names(duplicate_ids_proxy)){
+  network_matrix[i,duplicate_ids_proxy[[i]]] <- 1
+}
+
+# Create the actual network
+hairdresser_network <- graph.adjacency(network_matrix, mode = "undirected")
+V(hairdresser_network)$hairdresser_ID <- hair_recruitment_tracker$hairdresser_ID
+V(hairdresser_network)$hairdresser_name <- hair_recruitment_tracker$B13_hairdressername
+V(hairdresser_network)$hairdresser_nickname <- hair_recruitment_tracker$B13_hairdresser_nickname
+V(hairdresser_network)$hairdresser_directions <- hair_recruitment_tracker$B14_hairdresserlocation
+V(hairdresser_network)$hairdresser_phone <- hair_recruitment_tracker$B11a_phonenumber
+V(hairdresser_network)$cluster_ID <- hair_recruitment_tracker$cluster_ID
+
+# Find vertices with a degree greater than 0
+v_subset <-  degree(hairdresser_network) > 0
+# Subset the network
+hairdresser_network_subset <- induced_subgraph(hairdresser_network, which(v_subset))
+
+# Find the connected components
+components <- components(hairdresser_network_subset)
+
+# Number of components
+n_components <- length(components$membership)
+
+google_df <- data.frame()
+for (i in 1:max(components$membership)) {
+    # Extract the subgraph corresponding to the ith component
+    subgraph <- induced_subgraph(hairdresser_network_subset, which(components$membership == i))
+    
+    # Number of vertices in the component
+    num_vertices <- vcount(subgraph)
+    
+    # Number of edges that a complete graph would have
+    num_edges_complete_graph <- num_vertices * (num_vertices - 1) / 2
+    
+    # Check if the number of edges in the component equals that of a complete graph
+    if (ecount(subgraph) == num_edges_complete_graph) {
+      print(paste("Component", i, "is a complete graph."))
+    } else {
+      print(paste("Component", i, "is an incomplete graph."))
+      
+      google_df_new <- data.frame(Component = i,
+                                  IDs = paste0(names(V(subgraph)), collapse = ", "),
+                                  Info = paste0(names(V(subgraph)), " -- Phone: ", V(subgraph)$hairdresser_phone, "\n",
+                                                "Name: ", V(subgraph)$hairdresser_name, " -- ", 
+                                                "Nickname: ", V(subgraph)$hairdresser_nickname, "\n",
+                                                "Cluster_ID: ", V(subgraph)$cluster_ID, " -- ",
+                                                "Directions: ", V(subgraph)$hairdresser_directions, "\n\n",
+                                                collapse = ""))
+      google_df <- rbind(google_df, google_df_new)
+
+      plot(main = paste("Component", i), subgraph, edge.width = 0.5,  vertex.size = degree(subgraph),  vertex.label.cex = 1)
+    }
+}
+
+# It only makes sense to do this once all hairdressers were visited
+range_clear(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
+            sheet = "Network_Analysis - Post-Recruitment",
+            range = "A2:H1000")
+
+range_write(google_df,
+                  ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
+                  sheet = "Network_Analysis - Post-Recruitment",
+                  range = "A2",
+                  reformat = F,
+                  col_names = F)
+
+```
+
+##### 2.2 Extract which hairdresser ID to merge the matches into
+
+###### 2.2.0 Any merging issues? 
+
+This could be because there is more than 1 non-"duplicate" like "complete" or "ineligible" in the network.
+
+```{r}
+
+all_checks <- NULL
+for (i in 1:max(components$membership)) {
+    # Extract the subgraph corresponding to the ith component
+    subgraph <- induced_subgraph(hairdresser_network_subset, which(components$membership == i))
+    
+    # Is there more than 1 non-"duplicate" label in the component
+    x <- table(hair_recruitment_tracker$`Survey Status`[hair_recruitment_tracker$hairdresser_ID %in% V(subgraph)$name])
+    sum_non_duplicate <- sum(x[names(x) != "Duplicate(Appear more than once)"])
+    check <- sum_non_duplicate <= 1 & sum_non_duplicate > 0
+    
+    if(!check){
+      print(x)
+      print(components$membership[components$membership == i])
+    }
+    
+    all_checks <- c(all_checks, check)
+}
+
+table(all_checks)
+which(!all_checks)
+
+#components$membership[components$membership == 175]
+
+######## Any single vertex components?
+sum(components$csize == 1) # ---> Should be 0
+
+```
+
+###### 2.2.1 Identify complete/incomplete components
+
+```{r}
+
+components_completeness <- NULL
+for (i in 1:max(components$membership)) {
+    # Extract the subgraph corresponding to the ith component
+    subgraph <- induced_subgraph(hairdresser_network_subset, which(components$membership == i))
+    
+    # Number of vertices in the component
+    num_vertices <- vcount(subgraph)
+    
+    # Number of edges that a complete graph would have
+    num_edges_complete_graph <- num_vertices * (num_vertices - 1) / 2
+    
+    # Check if the number of edges in the component equals that of a complete graph
+    if (ecount(subgraph) == num_edges_complete_graph) {
+      components_completeness <- c(components_completeness, "Complete")
+    } else {
+      components_completeness <- c(components_completeness, "Incomplete")
+    }
+}
+
+```
+
+###### 2.2.2 Prep Helper Functions for Merging Process
+
+
+```{r}
+
+# Helper Function to reformat the merged information columns on the hairdressers
+combine_vectors_hair <- function(original_vector){
+  
+  # Ensure it's properly pasted
+  original_vector <- unlist(str_split(original_vector, ", "))
+  
+  if(all(original_vector == " ()", na.rm = T)){
+    return(NA)
+  }
+  
+  # Remove the empty bits
+  original_vector <- original_vector[original_vector != " ()"]
+
+  # Split the names and numbers
+  split_data <- str_split(original_vector, " \\(")
+  names <- sapply(split_data, `[`, 1)
+  numbers <- as.numeric(sapply(split_data, function(x) sub("\\)", "", x[2])))
+  
+  # Combine the names and their respective sums
+  combined_data <- data.frame(name = names, number = numbers) %>%
+  group_by(name) %>%
+  summarise(number = sum(number))
+  
+  # Construct the new vector
+  new_vector <- paste0(paste(combined_data$name, " (", combined_data$number, ")", sep=""), collapse = ", ")
+  
+  # Return the result
+  return(new_vector)
+}
+
+```
+
+##### 2.3 Merge complete components
+
+```{r}
+
+# Which components are complete?
+complete_components <- which(components_completeness == "Complete")
+
+# Merge the vertices in the components into the ID that is != "Duplicate"
+for(i in complete_components){
+  print(i)
+  vertices <- names(components$membership[components$membership == i])
+  
+  merge_destination <- hair_recruitment_tracker$hairdresser_ID[hair_recruitment_tracker$`Survey Status` != "Duplicate(Appear more than once)" & hair_recruitment_tracker$hairdresser_ID %in% vertices]
+  
+  hair_recruitment_tracker$`Survey Status`[hair_recruitment_tracker$hairdresser_ID %in% vertices]
+  
+  hair_recruitment_tracker$hairdresser_ID[ hair_recruitment_tracker$hairdresser_ID %in% vertices]
+  
+  if(length(merge_destination) != 1){
+    print("ERROR!")
+    break
+  }
+  
+  temp_df <- hairdresser_database_v1[hairdresser_database_v1$hairdresser_ID %in% vertices,]
+  
+  new_row <- c("hairdresser_ID" = merge_destination, 
+               "response_final_IDs" = paste0(temp_df$response_final_IDs, collapse = ", "),
+               "treatment_group" = combine_vectors_hair(temp_df$treatment_group),
+               "county_name" = combine_vectors_hair(temp_df$county_name),
+               "customers_per_hairdresser" = sum(as.integer(temp_df$customers_per_hairdresser)),
+               "cluster_ID" = combine_vectors_hair(temp_df$cluster_ID),
+               "caregiver_sample_size_in_cluster" = names(which.max(table(temp_df$caregiver_sample_size_in_cluster))),
+               "B11a_phonenumber" = combine_vectors_hair(temp_df$B11a_phonenumber),
+               "hairdresser_alternative_phonenumber" = combine_vectors_hair(temp_df$hairdresser_alternative_phonenumber),
+               "who_does_alternative_phone_belong" = combine_vectors_hair(temp_df$who_does_alternative_phone_belong),
+               "B13_hairdressername" = paste0(temp_df$B13_hairdressername, collapse = ", "),
+               "B13_hairdresser_nickname" = paste0(temp_df$B13_hairdresser_nickname, collapse = ", "),
+               "B14_hairdresserlocation" = paste0(temp_df$B14_hairdresserlocation, collapse = ", "))
+  
+  # Remove original rows and add the new row
+  hairdresser_database_v1 <- hairdresser_database_v1 %>% 
+    filter(!(hairdresser_ID %in% vertices)) %>% 
+    rbind(new_row)
+}
+
+```
+
+##### 2.4 Merge incomplete components
+
+```{r}
+
+# Match the hairdressers without phone numbers either to each other or to hairdressers with phone numbers
+matching_hairdressers_network_analysis <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=2120687644",
+           sheet = "Network_Analysis - Post-Recruitment")
+
+# Which components are complete?
+incomplete_components <- which(components_completeness == "Incomplete")
+
+# Are all incomplete components represented in the network analysis sheet?
+test_vec <- mean(incomplete_components %in% matching_hairdressers_network_analysis$`Incomplete Component`)
+if(test_vec == 1){
+  print("Check, all good!")
+} else { print("Something is wrong!") }
+
+
+# Merge the vertices in the components into the ID that is != "Duplicate"
+for(i in incomplete_components){
+  
+  vertices <- names(components$membership[components$membership == i])
+  
+  merge_destination <- hair_recruitment_tracker$hairdresser_ID[hair_recruitment_tracker$`Survey Status` != "Duplicate(Appear more than once)" & hair_recruitment_tracker$hairdresser_ID %in% vertices]
+  
+  if(length(merge_destination) > 1){
+    print("ERROR!")
+    break
+  }
+  
+  hair_recruitment_tracker[hair_recruitment_tracker$hairdresser_ID %in% vertices,]
+  
+  temp_df <- hairdresser_database_v1[hairdresser_database_v1$hairdresser_ID %in% vertices,]
+  
+  new_row <- c("hairdresser_ID" = merge_destination, 
+               "response_final_IDs" = paste0(temp_df$response_final_IDs, collapse = ", "),
+               "treatment_group" = combine_vectors_hair(temp_df$treatment_group),
+               "county_name" = combine_vectors_hair(temp_df$county_name),
+               "customers_per_hairdresser" = sum(as.integer(temp_df$customers_per_hairdresser)),
+               "cluster_ID" = combine_vectors_hair(temp_df$cluster_ID),
+               "caregiver_sample_size_in_cluster" = names(which.max(table(temp_df$caregiver_sample_size_in_cluster))),
+               "B11a_phonenumber" = combine_vectors_hair(temp_df$B11a_phonenumber),
+               "hairdresser_alternative_phonenumber" = combine_vectors_hair(temp_df$hairdresser_alternative_phonenumber),
+               "who_does_alternative_phone_belong" = combine_vectors_hair(temp_df$who_does_alternative_phone_belong),
+               "B13_hairdressername" = paste0(temp_df$B13_hairdressername, collapse = ", "),
+               "B13_hairdresser_nickname" = paste0(temp_df$B13_hairdresser_nickname, collapse = ", "),
+               "B14_hairdresserlocation" = paste0(temp_df$B14_hairdresserlocation, collapse = ", "))
+  
+  # Remove original rows and add the new row
+  hairdresser_database_v1 <- hairdresser_database_v1 %>% 
+    filter(!(hairdresser_ID %in% vertices)) %>% 
+    rbind(new_row)
+  
+}
+
+```
+
