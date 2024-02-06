@@ -822,7 +822,7 @@ for (i in 1:max(components$membership)) {
 }
 range_write(google_df,
                   ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
-                  sheet = "Network_Analysis",
+                  sheet = "Network_Analysis - Pre-Recruitment",
                   range = "A2",
                   reformat = F,
                   col_names = F)
@@ -1017,6 +1017,9 @@ hairdresser_database_better_IDs_no_contamination_ordered <- hairdresser_database
 #            data = hairdresser_database_better_IDs_no_contamination_ordered,
 #            range = "A1", 
 #            reformat = F)
+
+
+write.csv(hairdresser_database_better_IDs_no_contamination_ordered, "Data Exports/vcf2_hairdresser_database_v1.csv", row.names = F)
 ```
 
 ### Export
