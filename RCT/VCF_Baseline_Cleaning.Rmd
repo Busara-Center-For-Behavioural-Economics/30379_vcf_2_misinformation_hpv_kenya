@@ -836,7 +836,7 @@ range_write(google_df,
 
 # Match the hairdressers without phone numbers either to each other or to hairdressers with phone numbers
 matching_hairdressers_network_analysis <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=2120687644",
-           sheet = "Network_Analysis")
+           sheet = "Network_Analysis - Pre-Recruitment")
 
 current_max <- max(baseline_data_new$hairdresser_ID, na.rm = T)
 for(i in 1:nrow(matching_hairdressers_network_analysis)){
@@ -943,6 +943,7 @@ hairdresser_database_better_IDs <- hairdresser_database %>%
 # Which participants to kick out?
 participants_to_kick_out_from_study <- unlist(str_split(hairdresser_database_better_IDs[str_count(hairdresser_database_better_IDs$treatment_group, "Online_Only|Control") > 0,]$response_final_IDs, ", "))
 
+
 # How does this affect cluster sizes? NOT TERRIBLE
 temp_1 <- baseline_data_new %>% 
   group_by(B0_cluster) %>% 
@@ -1015,11 +1016,12 @@ hairdresser_database_better_IDs_no_contamination_ordered <- hairdresser_database
 ```{r}
 #range_write(ss = "https://docs.google.com/spreadsheets/d/1ydO5FV0WPT0nsDh6kEWF32_TIP9KtX1qAUGc7DTOHSU/edit#gid=0", 
 #            data = hairdresser_database_better_IDs_no_contamination_ordered,
+#            sheet = "Hairdressers_List"
 #            range = "A1", 
 #            reformat = F)
 
-
 write.csv(hairdresser_database_better_IDs_no_contamination_ordered, "Data Exports/vcf2_hairdresser_database_v1.csv", row.names = F)
+
 ```
 
 ### Export
@@ -1072,36 +1074,6 @@ temp_2 <- baseline_data %>%
 rbind(temp_1,temp_2) %>% 
   filter(!duplicated(phone)) %>% 
   write.csv("Data Exports/Cookie_Link_Resend_Message.csv", row.names = F)
-
-```
-
-
-### Condensing
-
-We can't afford to move forward with all participants.
-
-#### 1. Fix input errors from FOs
-
-```{r}
-
-# survey  ID 6697B4 was keyed in twice by mistake. Please replace the one done earlier before 3pm to 6696H6.
-
-# In cluster 292 the field officer by the name Bernard Musili accidentally keyed two hairdressers using the same survey ID (7835B1) Discard Veronicah Wanjiru from the data
-
-```
-
-#### 2. Merge and Split Hairdressers
-
-```{r}
-
-# We had a case where Survey ID 6694P0 is being shared by two different respondents who should be independent
-
-# The following are duplicate IDs: 28B8 same person as 4577K1, 4822X2 same as 7588D0, 5976N4 same as 5124Q3
-
-
-merge_hairdressers <- function(){
-  
-}
 
 ```
 

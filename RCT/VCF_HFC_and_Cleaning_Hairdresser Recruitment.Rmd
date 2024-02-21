@@ -57,6 +57,30 @@ hair_recruit_data <- hair_recruit_data %>%
 # Filter for Main Recruitment
 hair_recruit_data <- hair_recruit_data %>% filter(SubmissionDate >= as_datetime("2024-01-25 00:00:00"))
 
+########## Fix some mistyped IDs and remove duplicates
+
+# For Survey ID 57108168 its hairdresser ID should be 6697B4, and for 1962141 the hairdresser ID should remain as it is- 6696H6
+hair_recruit_data$pull_hairdresser_ID[hair_recruit_data$final_survey_ID == 57108168] <- "6697B4"
+
+# For hairdresser ID 2963N2 (this was keyed in twice) --> delete the one done by Benjamin Thoge (4819175)
+sum(hair_recruit_data$final_survey_ID == 4819175) == 1
+hair_recruit_data <- hair_recruit_data %>% filter(final_survey_ID != 4819175)
+
+# 6766J0 -->  Delete the survey done by Tabitha Etyang (691104)
+sum(hair_recruit_data$final_survey_ID == 691104) == 1
+hair_recruit_data <- hair_recruit_data %>% filter(final_survey_ID != 691104)
+
+# change the duplicate done by Sarah Madaga for ID 2484N4 (final ID 624188) to 1395X0
+sum(hair_recruit_data$final_survey_ID == 624188) == 1
+hair_recruit_data$pull_hairdresser_ID[hair_recruit_data$final_survey_ID == 624188] <- "1395X0"
+
+# In cluster 292 the field officer by the name Bernard Musili accidentally keyed two hairdressers using the same survey ID (7835B1) Discard Veronicah Wanjiru from the data --> remove 977166
+sum(hair_recruit_data$final_survey_ID == 977166) == 1
+hair_recruit_data <- hair_recruit_data %>% filter(final_survey_ID != 977166)
+
+# For the case of 2879Y6, the FO was meant to go and interview hairdresser 8365Q6 for mop-up and when he searched the name he did not realize it had 2 searches and so he keyed in 2879Y6 instead of 8365Q6. Later in the evening realized both are the same hairdresser. 2879Y6 is a duplicate of 8365Q6 -->  delete the survey under 2879Y6 that was conducted by Jones Kipsang 202-02-14 and retain the one done by Sahara Mohamed on 2024-02-08
+hair_recruit_data <- hair_recruit_data %>% filter(final_survey_ID != 3185147)
+
 ```
 
 ### Regular Audio Audits
@@ -76,7 +100,7 @@ temp_df2 <- hair_recruit_data %>%
   mutate(duration_mins = round(duration/60)) %>% 
   group_by(submission_date_dateonly) %>% 
   slice_sample(n = 5) %>% 
-  dplyr::select(final_survey_ID, pull_hairdresser_ID, submission_date_dateonly, duration_mins, en_name, county_name_work, B1_name, audio) # Could add filter for IDs in manul audits
+  dplyr::select(final_survey_ID, pull_hairdresser_ID, submission_date_dateonly, duration_mins, en_name, county_name_work, B1_name, audio) # Could add filter for IDs in manual audits
 
 range_write(temp_df2, 
             ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
@@ -85,6 +109,62 @@ range_write(temp_df2,
             reformat = F,
             col_names = F)
 ```
+
+### Check match of IDs before Uploading Server Stats
+
+```{r}
+
+gsheet_hairbase <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1ydO5FV0WPT0nsDh6kEWF32_TIP9KtX1qAUGc7DTOHSU/edit#gid=0", 
+           sheet = "Hairdressers_List")
+
+
+# Which IDs are duplicated?
+sum(duplicated(hair_recruit_data$pull_hairdresser_ID))
+hair_recruit_data$pull_hairdresser_ID[duplicated(hair_recruit_data$pull_hairdresser_ID)]
+
+temp <- gsheet_hairbase %>% filter(`Survey Status` == "Complete")
+temp1 <- hair_recruit_data
+nrow(temp) == nrow(temp1)
+
+# Which IDs are in the survey but not in the completed hairdresser base
+temp1$pull_hairdresser_ID[!(temp1$pull_hairdresser_ID %in% temp$hairdresser_ID)]
+
+# Which IDs are not in the survey but are labelled as complete in the hairdresser database
+temp$hairdresser_ID[!(temp$hairdresser_ID %in% temp1$pull_hairdresser_ID)]
+
+# Any duplicate hairdresser IDs in the survey data?
+hair_recruit_data %>% 
+  filter(pull_hairdresser_ID %in% temp1$pull_hairdresser_ID[duplicated(temp1$pull_hairdresser_ID)]) %>% 
+  arrange(pull_hairdresser_ID) %>% 
+  write.csv("Data Exports/duplicate_hairdresser_IDs.csv")
+
+
+```
+
+### Upload Server Stats
+
+```{r}
+
+hair_recruit_data %>% 
+  group_by(county_name_work) %>% 
+  summarise(n = n()) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1ydO5FV0WPT0nsDh6kEWF32_TIP9KtX1qAUGc7DTOHSU/edit#gid=1451987585",
+            sheet = "Server Stats",
+            range = "A2",
+            reformat = F,
+            col_names = F)
+
+hair_recruit_data %>% 
+  group_by(en_name) %>% 
+  summarise(n = n()) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1ydO5FV0WPT0nsDh6kEWF32_TIP9KtX1qAUGc7DTOHSU/edit#gid=1451987585",
+            sheet = "Server Stats",
+            range = "A10",
+            reformat = F,
+            col_names = F)
+
+```
+
 
 ### Merge duplicates in hairdresser database
 
@@ -128,6 +208,11 @@ if(share_ids_real != 1){
 
 
 ```
+
+```{r}
+table(hair_recruitment_tracker$`Case Status`, useNA = "always")
+```
+
 
 ##### 1.2 Read hairdresser database
 
@@ -202,17 +287,17 @@ for (i in 1:max(components$membership)) {
 }
 
 # It only makes sense to do this once all hairdressers were visited
-range_clear(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
-            sheet = "Network_Analysis - Post-Recruitment",
-            range = "A2:H1000")
-
-range_write(google_df,
-                  ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
-                  sheet = "Network_Analysis - Post-Recruitment",
-                  range = "A2",
-                  reformat = F,
-                  col_names = F)
-
+#range_clear(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
+#            sheet = "Network_Analysis - Post-Recruitment",
+#            range = "A2:H1000")
+#
+#range_write(google_df,
+#                  ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
+#                  sheet = "Network_Analysis - Post-Recruitment",
+#                  range = "A2",
+#                  reformat = F,
+#                  col_names = F)
+#
 ```
 
 ##### 2.2 Extract which hairdresser ID to merge the matches into
@@ -277,7 +362,6 @@ for (i in 1:max(components$membership)) {
 ```
 
 ###### 2.2.2 Prep Helper Functions for Merging Process
-
 
 ```{r}
 
@@ -414,6 +498,84 @@ for(i in incomplete_components){
     rbind(new_row)
   
 }
+
+```
+
+
+### 3. Merge Recruitment data with Hairdresser Database
+
+```{r}
+
+# Order the hairdresser database and the new data properly
+hairdresser_database_v2 <- hairdresser_database_v1 %>% 
+  filter(hairdresser_ID %in% hair_recruit_data$pull_hairdresser_ID) %>% 
+  arrange(hairdresser_ID)
+
+hair_recruit_data_ordered <- hair_recruit_data %>% 
+  arrange(pull_hairdresser_ID)
+
+
+# Merge the new data into the columns 
+
+# phone number
+hairdresser_database_v2$B11a_phonenumber <- str_remove(paste(hairdresser_database_v2$B11a_phonenumber, hair_recruit_data$B7_primary_phonenumber), " NA")
+
+# alternative phone number
+hairdresser_database_v2$hairdresser_alternative_phonenumber <- str_remove(paste(hairdresser_database_v2$hairdresser_alternative_phonenumber, hair_recruit_data$B7d_alternativephonnu), " NA")
+
+# name
+hairdresser_database_v2$B13_hairdressername <- str_remove(paste(hairdresser_database_v2$B13_hairdressername, hair_recruit_data$B1_name), " NA")
+
+# Smartphone
+hairdresser_database_v2$smartphone <- ifelse(hair_recruit_data$B7_smartphone == 1, "Yes", "No")
+
+# Private Phone
+hairdresser_database_v2$private_phone <- ifelse(hair_recruit_data$B7_shared == 2, "Yes", "No")
+
+# Social Media Usage
+hair_recruit_data$B8a_whichone <- gsub("1", "Facebook", hair_recruit_data$B8a_whichone)
+hair_recruit_data$B8a_whichone <- gsub("2", "Whatsapp", hair_recruit_data$B8a_whichone)
+hair_recruit_data$B8a_whichone <- gsub("3", "Instagram", hair_recruit_data$B8a_whichone)
+hair_recruit_data$B8a_whichone <- gsub("4", "TikTok", hair_recruit_data$B8a_whichone)
+hairdresser_database_v2$social_media <- hair_recruit_data$B8a_whichone
+
+# Their state of mind around HPV 
+str_B9a_knowhpv <- ifelse(hair_recruit_data$B9a_knowhpv == 1, "Knows about HPV", "Doesn't know about HPV")
+str_B9b_knowhpvvacc <- ifelse(hair_recruit_data$B9b_knowhpvvacc == 1, "Knows about HPV Vaccine", "Doesn't know about HPV Vaccine")
+str_B9c_carehpv <- ifelse(hair_recruit_data$B9c_carehpv == 1, "Cares about preventing HPV", "Doesn't care about preventing HPV")
+str_B9d_causescervcancer <- ifelse(hair_recruit_data$B9d_causescervcancer == 1, "Believes HPV causes cancer", "Doesn't believe HPV causes cancer")
+str_B9e_protectsagainst <- ifelse(hair_recruit_data$B9e_protectsagainst == 1, "Believes HPV vaccine protects against wards", "Doesn't believe HPV vaccine protects about wards")
+hairdresser_database_v2$hpv_state <- paste(str_B9a_knowhpv, str_B9b_knowhpvvacc, str_B9c_carehpv, str_B9d_causescervcancer, str_B9e_protectsagainst, sep = ", ")
+
+# Preferred Phone number
+hairdresser_database_v2$preferred_phonenumber <- ifelse(coalesce(hair_recruit_data$preferred_phonenumber_1, hair_recruit_data$preferred_phonenumber_2) == 2, "Primary Phonenumber", 
+       ifelse(coalesce(hair_recruit_data$preferred_phonenumber_1, hair_recruit_data$preferred_phonenumber_2) == 3, "Any", "Alternative Phonenumber"))
+
+# Onboarding Scheduling
+hair_recruit_data$onboarding_scheduling <- gsub("1", "Monday", hair_recruit_data$onboarding_scheduling)
+hair_recruit_data$onboarding_scheduling <- gsub("2", "Tuesday", hair_recruit_data$onboarding_scheduling)
+hair_recruit_data$onboarding_scheduling <- gsub("3", "Wednesday", hair_recruit_data$onboarding_scheduling)
+hair_recruit_data$onboarding_scheduling <- gsub("4", "Thursday", hair_recruit_data$onboarding_scheduling)
+hair_recruit_data$onboarding_scheduling <- gsub("5", "Friday", hair_recruit_data$onboarding_scheduling)
+hair_recruit_data$onboarding_scheduling <- gsub("6", "Saturday", hair_recruit_data$onboarding_scheduling)
+hair_recruit_data$onboarding_scheduling <- gsub("7", "Sunday", hair_recruit_data$onboarding_scheduling)
+
+hairdresser_database_v2$scheduling_preferences <- paste(paste("Monday:", hair_recruit_data[,paste0("onboarding_time_slots_",1)]), 
+      paste("Tuesday:",  hair_recruit_data[,paste0("onboarding_time_slots_",2)]), 
+      paste("Wednesday:", hair_recruit_data[,paste0("onboarding_time_slots_",3)]), 
+      paste("Thursday:", hair_recruit_data[,paste0("onboarding_time_slots_",4)]), 
+      paste("Friday:", hair_recruit_data[,paste0("onboarding_time_slots_",5)]),
+      paste("Saturday:", hair_recruit_data[,paste0("onboarding_time_slots_",6)]), 
+      paste("Sunday:", hair_recruit_data[,paste0("onboarding_time_slots_",7)]))
+
+```
+
+### 4. Export hairdresser database
+
+```{r}
+
+hairdresser_database_v2 %>% 
+  write.csv("Data Exports/hairdresser_database_v2.csv", row.names = F)
 
 ```
 

@@ -1,0 +1,233 @@
+---
+title: "VCF_Shrinking_Study_Sample"
+author: "Jonathan Karl"
+date: "2024-02-20"
+output: html_document
+---
+
+### 0. Setup
+
+```{r}
+
+# Clean the environment
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "lubridate")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+```{r}
+tblFun <- function(x){
+  tbl <- table(x)
+  res <- cbind(tbl,round(prop.table(tbl)*100,2))
+  colnames(res) <- c('Count','Percentage')
+  res
+}
+```
+
+### 1. Read Data
+
+```{r}
+
+# Hairdresser Database
+hairdresser_database_v2 <- read.csv("Data Exports/hairdresser_database_v2.csv")
+
+# Cleaned Caregiver Dataset
+baseline_caregivers_clean <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+
+
+# Merge data
+hairdresser_database_v2_separated <- hairdresser_database_v2 %>%
+  separate_rows(response_final_IDs, convert = TRUE)
+
+merged_vcf_database <- merge(hairdresser_database_v2_separated, baseline_caregivers_clean, by.x = "response_final_IDs", by.y = "final_ID", all = TRUE)
+
+# Remove all respondents which are in an offline group but don't have a matching hairdresser
+matched_with_hairdresser <- unlist(str_split(hairdresser_database_v2$response_final_IDs, ", "))
+respondents_to_exclude <- !(merged_vcf_database$response_final_IDs %in% matched_with_hairdresser) & merged_vcf_database$cluster_treatment_group %in% c("Online_Offline", "Offline_Only")
+
+# Export IDs of to be excluded participants
+merged_vcf_database %>% 
+  filter(respondents_to_exclude) %>% 
+  dplyr::select(response_final_IDs) %>% 
+  write.csv("Data Exports/exclude_caregivers_no_hairdresser_match", row.names = F)
+
+# Remove the respondents
+merged_vcf_database_filtered <- merged_vcf_database %>% 
+  filter(!respondents_to_exclude) 
+
+cluster_sizes <- merged_vcf_database %>% group_by(B0_cluster) %>% 
+  summarise(n = n()) %>% 
+  arrange(B0_cluster)
+
+```
+
+
+```{r}
+
+# Priorities
+# maximise Cluster Size (max)
+# minimise DSA
+# maximise people per hairdresser
+# minimise closeness of hairdressers
+# minimise hairdressers without smartphones
+
+# Create df with all information based on which we will filter
+filtering_df <- merged_vcf_database_filtered[,c("response_final_IDs", "hairdresser_ID.x", "B0_cluster", "county_name.y","customers_per_hairdresser", "smartphone", "cluster_treatment_group")]
+colnames(filtering_df) <- c("final_ID", "hairdresser_ID", "cluster_ID", "county_name", "customers_per_hairdresser", "hairdresser_smartphone_access", "cluster_treatment_group")
+
+# Add cluster size
+cluster_sizes_vec <- cluster_sizes$n
+names(cluster_sizes_vec) <- as.character(cluster_sizes$B0_cluster)
+filtering_df$cluster_n <- unname(cluster_sizes_vec[as.character(filtering_df$cluster_ID)])
+
+
+# Create probability weights for each relevant column
+# non-treatment specific
+weights_county <- ifelse(filtering_df$county_name == "Nairobi", 1, 0.5)
+weights_cluster_size <- (filtering_df$cluster_n*-1) + max(filtering_df$cluster_n)+1
+
+# treatment specific
+weights_customer_per_hair <- filtering_df$customers_per_hairdresser
+weights_customer_per_hair[is.na(weights_customer_per_hair)] <- mean(weights_customer_per_hair, na.rm = T)
+weights_smartphone_hairdresser <- ifelse(filtering_df$hairdresser_smartphone_access == "Yes", 1, 0.5)
+weights_smartphone_hairdresser[is.na(weights_smartphone_hairdresser)] <- mean(weights_smartphone_hairdresser, na.rm = T)
+
+# Create a single probability weight index vector helper function
+scale_values <- function(x){(x-min(x))/(max(x)-min(x))}
+
+# Optimise this
+set.seed(123)
+optimiser_df <- data.frame()
+
+which <- c("plain", "exp", "scaled")
+county_count <- 1
+cluster_size_n_count <- 1
+smartphone_hairdresser_count <- 1
+customer_per_hair_count <- 1
+
+for(county_w in list(weights_county, weights_county**2, scale_values(weights_county))){
+  for(cluster_size_n_w in list(weights_cluster_size, weights_cluster_size**2, scale_values(weights_cluster_size))){
+    for(smartphone_hairdresser_w in list(weights_smartphone_hairdresser, weights_smartphone_hairdresser**2, scale_values(weights_smartphone_hairdresser))){
+      for(customer_per_hair_w in list(weights_customer_per_hair, weights_customer_per_hair**2, scale_values(weights_customer_per_hair))){
+        for(n_hair in seq(from = 500, to = 2000, by = 100)){
+          
+          # Create weights
+          probability_weights <- county_w + cluster_size_n_w + smartphone_hairdresser_w + customer_per_hair_w
+          
+          # First select hairdressers
+          sampled_hairIDs <- sample(x = filtering_df$hairdresser_ID[!is.na(filtering_df$hairdresser_ID)],
+                                      size = n_hair,
+                                      prob = probability_weights[!is.na(filtering_df$hairdresser_ID)])
+          
+          # Extract surveyIDs associated with these hairIDs
+          offline_treatment_surveyIDs <- filtering_df$final_ID[filtering_df$hairdresser_ID %in% sampled_hairIDs]
+          
+          # Sample as many non-offline surveyIDs
+          sampled_surveyIDs_non_offline <- sample(x = filtering_df$final_ID[is.na(filtering_df$hairdresser_ID)],
+                                      size = length(offline_treatment_surveyIDs),
+                                      prob = probability_weights[is.na(filtering_df$hairdresser_ID)])
+          survey_n <- length(offline_treatment_surveyIDs)*2
+          
+          
+          # Filter the dataframe
+          sampled_surveyIDs <- c(offline_treatment_surveyIDs, sampled_surveyIDs_non_offline)
+          filtered_df <- filtering_df[filtering_df$final_ID %in% sampled_surveyIDs,]
+          
+          #### Add new row to results df
+          new_row <- NULL
+          new_row <- c(new_row, paste(paste0("County_", which[county_count]), paste0("Cluster_Size_", which[cluster_size_n_count]), paste0("Smartphone_Access_", which[smartphone_hairdresser_count]), paste0("Customer_per_hair_", which[customer_per_hair_count]), sep = ", "))
+          new_row <- c(new_row, survey_n, n_hair)
+          
+          # How many per cluster (+ variability indicator for cluster sizes)
+          (n_per_cluster <- filtered_df %>% group_by(cluster_ID) %>% summarise(n = n()) %>% arrange(n))
+          cluster_n_variability <- sd(n_per_cluster$n)/mean(n_per_cluster$n)
+          new_row <- c(new_row, min(n_per_cluster$n), round(cluster_n_variability, 4))
+          
+          # How much DSA reduction?
+          dsa_redcution <- table(filtered_df$county_name)/table(filtering_df$county_name)
+          dsa_redcution_diff <- paste0(names(dsa_redcution),": ", round(dsa_redcution, 2), collapse = ", ")
+          new_row <- c(new_row, dsa_redcution_diff)
+          
+          # Treatment group distribution
+          temp <- deframe(filtered_df %>% group_by(cluster_treatment_group) %>% summarise(n = n()) %>% drop_na())
+          treatment_distribution <- paste0(names(temp), ": ", temp, collapse = ", ")
+          new_row <- c(new_row, treatment_distribution)
+          
+          # How many participants are reached by hairdressers without a smartphone?
+          smartphone_reach <- unlist(table(filtered_df$hairdresser_smartphone_access[!is.na(filtered_df$hairdresser_ID)])/sum(table(filtered_df$hairdresser_smartphone_access[!is.na(filtered_df$hairdresser_ID)])))[2]
+          new_row <- c(new_row, round(smartphone_reach, 3))
+          
+          # Power calc
+          mean_n <- mean(filtered_df %>% group_by(cluster_ID) %>% summarise(n = n()) %>% pull(n))
+          power_calc <- wp.crt2arm(n = mean_n, J = 108/2, icc = 0.02, alpha = 0.05, power = 0.8)
+          new_row <- c(new_row, round(power_calc$f, 4))
+          
+          optimiser_df <- rbind(optimiser_df, new_row)
+          
+        }
+        
+        customer_per_hair_count <- customer_per_hair_count + 1
+        if(customer_per_hair_count == 4){
+          customer_per_hair_count <- 1
+        }
+        
+      }
+      
+      smartphone_hairdresser_count <- smartphone_hairdresser_count + 1
+      if(smartphone_hairdresser_count == 4){
+        smartphone_hairdresser_count <- 1
+      }
+    }
+    
+    cluster_size_n_count <- cluster_size_n_count + 1
+    if(cluster_size_n_count == 4){
+      cluster_size_n_count <- 1
+    }
+  }
+  
+  county_count <- county_count + 1
+  if(county_count == 4){
+    county_count <- 1
+  }
+  
+}
+
+colnames(optimiser_df) <- c("Probability_Weights", "n", "hair_n", "min_n_cluster", "variability_cluster", "dsa_redcution_diff", "treatment_distribution", "smartphone_reach", "power_rep")
+
+```
+
+
+```{r}
+
+# Format columns
+optimiser_df$n <- as.integer(optimiser_df$n)
+optimiser_df$hair_n <- as.integer(optimiser_df$hair_n)
+optimiser_df$variability_cluster <- as.numeric(optimiser_df$variability_cluster)
+#optimiser_df$dsa_redcution_diff <- as.numeric(optimiser_df$dsa_redcution_diff)
+optimiser_df$power_rep <- as.numeric(optimiser_df$power_rep)
+
+# Order data.frame
+optimiser_df_ordered <- optimiser_df %>% 
+  arrange(variability_cluster, n, hair_n, desc(dsa_redcution_diff), power_rep)
+
+optimiser_df_ordered %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1yRXVx8iq7dEwLcLkVnmjnG7md0WAjQLGPu2IoQ65HsE/edit#gid=0",
+              range = "A2",
+              col_names = F,
+              reformat = F)
+
+```
+
