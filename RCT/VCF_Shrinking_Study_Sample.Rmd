@@ -5,7 +5,7 @@ date: "2024-02-20"
 output: html_document
 ---
 
-### 0. Setup
+# 0. Setup
 
 ```{r}
 
@@ -37,7 +37,7 @@ tblFun <- function(x){
 }
 ```
 
-### 1. Read Data
+# 1. Read Data
 
 ```{r}
 
@@ -74,6 +74,7 @@ cluster_sizes <- merged_vcf_database %>% group_by(B0_cluster) %>%
 
 ```
 
+# 2. Optimise the sample
 
 ```{r}
 
@@ -111,12 +112,15 @@ scale_values <- function(x){(x-min(x))/(max(x)-min(x))}
 # Optimise this
 set.seed(123)
 optimiser_df <- data.frame()
+hairdresser_ids_ls <- list()
+caregiver_ids_ls <- list
 
 which <- c("plain", "exp", "scaled")
 county_count <- 1
 cluster_size_n_count <- 1
 smartphone_hairdresser_count <- 1
 customer_per_hair_count <- 1
+overall_count <- 1
 
 for(county_w in list(weights_county, weights_county**2, scale_values(weights_county))){
   for(cluster_size_n_w in list(weights_cluster_size, weights_cluster_size**2, scale_values(weights_cluster_size))){
@@ -124,16 +128,21 @@ for(county_w in list(weights_county, weights_county**2, scale_values(weights_cou
       for(customer_per_hair_w in list(weights_customer_per_hair, weights_customer_per_hair**2, scale_values(weights_customer_per_hair))){
         for(n_hair in seq(from = 500, to = 2000, by = 100)){
           
-          # Create weights
-          probability_weights <- county_w + cluster_size_n_w + smartphone_hairdresser_w + customer_per_hair_w
+          # Create weights for hairdresser selection
+          probability_weights_hair <- county_w + cluster_size_n_w + smartphone_hairdresser_w + customer_per_hair_w
           
           # First select hairdressers
           sampled_hairIDs <- sample(x = filtering_df$hairdresser_ID[!is.na(filtering_df$hairdresser_ID)],
                                       size = n_hair,
-                                      prob = probability_weights[!is.na(filtering_df$hairdresser_ID)])
+                                      prob = probability_weights_hair[!is.na(filtering_df$hairdresser_ID)])
+          
+          hairdresser_ids_ls <- c(hairdresser_ids_ls, list(sampled_hairIDs))
           
           # Extract surveyIDs associated with these hairIDs
           offline_treatment_surveyIDs <- filtering_df$final_ID[filtering_df$hairdresser_ID %in% sampled_hairIDs]
+          
+          # Create weights for remaining participants
+          probability_weights <- county_w + cluster_size_n_w + smartphone_hairdresser_w + customer_per_hair_w
           
           # Sample as many non-offline surveyIDs
           sampled_surveyIDs_non_offline <- sample(x = filtering_df$final_ID[is.na(filtering_df$hairdresser_ID)],
@@ -144,6 +153,7 @@ for(county_w in list(weights_county, weights_county**2, scale_values(weights_cou
           
           # Filter the dataframe
           sampled_surveyIDs <- c(offline_treatment_surveyIDs, sampled_surveyIDs_non_offline)
+          caregiver_ids_ls <- c(caregiver_ids_ls, list(sampled_surveyIDs))
           filtered_df <- filtering_df[filtering_df$final_ID %in% sampled_surveyIDs,]
           
           #### Add new row to results df
@@ -159,7 +169,11 @@ for(county_w in list(weights_county, weights_county**2, scale_values(weights_cou
           # How much DSA reduction?
           dsa_redcution <- table(filtered_df$county_name)/table(filtering_df$county_name)
           dsa_redcution_diff <- paste0(names(dsa_redcution),": ", round(dsa_redcution, 2), collapse = ", ")
-          new_row <- c(new_row, dsa_redcution_diff)
+         new_row <- c(new_row, dsa_redcution_diff)
+          
+          # Share that get DSA
+          share_dsa <- mean(filtered_df$county_name != "Nairobi")
+          new_row <- c(new_row, round(share_dsa, 3))
           
           # Treatment group distribution
           temp <- deframe(filtered_df %>% group_by(cluster_treatment_group) %>% summarise(n = n()) %>% drop_na())
@@ -175,7 +189,10 @@ for(county_w in list(weights_county, weights_county**2, scale_values(weights_cou
           power_calc <- wp.crt2arm(n = mean_n, J = 108/2, icc = 0.02, alpha = 0.05, power = 0.8)
           new_row <- c(new_row, round(power_calc$f, 4))
           
+          new_row <- c(new_row, overall_count)
+          
           optimiser_df <- rbind(optimiser_df, new_row)
+          overall_count <- overall_count + 1
           
         }
         
@@ -205,7 +222,7 @@ for(county_w in list(weights_county, weights_county**2, scale_values(weights_cou
   
 }
 
-colnames(optimiser_df) <- c("Probability_Weights", "n", "hair_n", "min_n_cluster", "variability_cluster", "dsa_redcution_diff", "treatment_distribution", "smartphone_reach", "power_rep")
+colnames(optimiser_df) <- c("Probability_Weights", "n", "hair_n", "min_n_cluster", "variability_cluster", "dsa_redcution_diff", "share_DSA", "treatment_distribution", "smartphone_reach", "power_rep", "simulation_No")
 
 ```
 
@@ -216,12 +233,14 @@ colnames(optimiser_df) <- c("Probability_Weights", "n", "hair_n", "min_n_cluster
 optimiser_df$n <- as.integer(optimiser_df$n)
 optimiser_df$hair_n <- as.integer(optimiser_df$hair_n)
 optimiser_df$variability_cluster <- as.numeric(optimiser_df$variability_cluster)
-#optimiser_df$dsa_redcution_diff <- as.numeric(optimiser_df$dsa_redcution_diff)
+optimiser_df$share_DSA <- as.numeric(optimiser_df$share_DSA)
 optimiser_df$power_rep <- as.numeric(optimiser_df$power_rep)
 
 # Order data.frame
 optimiser_df_ordered <- optimiser_df %>% 
-  arrange(variability_cluster, n, hair_n, desc(dsa_redcution_diff), power_rep)
+  arrange(power_rep, variability_cluster, n, hair_n, share_DSA) %>% 
+  mutate(score = - scale_values(power_rep)*3 -  scale_values(variability_cluster)*3 - scale_values(share_DSA) - scale_values(n) -  scale_values(hair_n)*1.5) %>% 
+  arrange(desc(score))
 
 optimiser_df_ordered %>% 
   range_write(ss = "https://docs.google.com/spreadsheets/d/1yRXVx8iq7dEwLcLkVnmjnG7md0WAjQLGPu2IoQ65HsE/edit#gid=0",
@@ -230,4 +249,11 @@ optimiser_df_ordered %>%
               reformat = F)
 
 ```
+
+# 3. Setup new Hairdresser and Caregiver Databases
+
+```{r}
+
+```
+
 
