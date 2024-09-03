@@ -155,6 +155,12 @@ joined_data <- st_join(ken_general_2020_cropped_sf, clusters_circles_sf, join = 
 # Aggregate the sum of the population density for each polygon (cluster)
 aggregated_pop_cluster <- aggregate(joined_data$ken_general_2020, list(joined_data$cluster_id), sum)
 
+
+
+final_clusters_allocated_df <- read.csv("Data Exports/vcf_final_clusters_allocated.csv")
+
+mean(aggregated_pop_cluster[aggregated_pop_cluster$Group.1 %in% final_clusters_allocated_df$cluster_id,]$x)
+
 #### Plot the clusters onto the map with population density and administrative boundaries #####
 
 ### To enable the plotting of the pop-density data, convert joined geodata into df and clean it

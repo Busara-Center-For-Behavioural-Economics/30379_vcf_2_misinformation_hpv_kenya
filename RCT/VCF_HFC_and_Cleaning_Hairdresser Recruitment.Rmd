@@ -16,7 +16,7 @@ rm(list = ls())
 knitr::opts_knit$set(options(scipen=999))
 
 # Install and load all the packages that will be used for analysis
-pkgs <- c("tidyverse", "googlesheets4", "lubridate", "stringdist", "igraph")
+pkgs <- c("tidyverse", "googlesheets4", "lubridate", "stringdist", "igraph", "sf", "sp")
 
 miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
 if(length(miss_pkgs)>0){
@@ -219,7 +219,10 @@ table(hair_recruitment_tracker$`Case Status`, useNA = "always")
 ```{r}
 
 # Read data
-hairdresser_database_v1 <- read.csv("Data Exports/vcf2_hairdresser_database_v1.csv")
+hairdresser_database_v1 <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1ydO5FV0WPT0nsDh6kEWF32_TIP9KtX1qAUGc7DTOHSU/edit#gid=0",
+           sheet = "Hairdressers_List")[,1:13]
+
+######### THE HAIRDRESSER DATABASE V1 csv IS BROKEN!!!!!!!!!!
 
 ```
 
@@ -286,18 +289,19 @@ for (i in 1:max(components$membership)) {
     }
 }
 
+
 # It only makes sense to do this once all hairdressers were visited
-#range_clear(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
-#            sheet = "Network_Analysis - Post-Recruitment",
-#            range = "A2:H1000")
-#
-#range_write(google_df,
-#                  ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
-#                  sheet = "Network_Analysis - Post-Recruitment",
-#                  range = "A2",
-#                  reformat = F,
-#                  col_names = F)
-#
+range_clear(ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
+            sheet = "Network_Analysis - Post-Recruitment",
+            range = "A2:C1000")
+
+range_write(google_df,
+                  ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
+                  sheet = "Network_Analysis - Post-Recruitment",
+                  range = "A2",
+                  reformat = F,
+                  col_names = F)
+
 ```
 
 ##### 2.2 Extract which hairdresser ID to merge the matches into
@@ -406,14 +410,14 @@ complete_components <- which(components_completeness == "Complete")
 
 # Merge the vertices in the components into the ID that is != "Duplicate"
 for(i in complete_components){
-  print(i)
+  #print(i)
   vertices <- names(components$membership[components$membership == i])
   
   merge_destination <- hair_recruitment_tracker$hairdresser_ID[hair_recruitment_tracker$`Survey Status` != "Duplicate(Appear more than once)" & hair_recruitment_tracker$hairdresser_ID %in% vertices]
   
   hair_recruitment_tracker$`Survey Status`[hair_recruitment_tracker$hairdresser_ID %in% vertices]
   
-  hair_recruitment_tracker$hairdresser_ID[ hair_recruitment_tracker$hairdresser_ID %in% vertices]
+  hair_recruitment_tracker$hairdresser_ID[hair_recruitment_tracker$hairdresser_ID %in% vertices]
   
   if(length(merge_destination) != 1){
     print("ERROR!")
@@ -514,42 +518,45 @@ hairdresser_database_v2 <- hairdresser_database_v1 %>%
 hair_recruit_data_ordered <- hair_recruit_data %>% 
   arrange(pull_hairdresser_ID)
 
-
 # Merge the new data into the columns 
+match_vec <- match(hairdresser_database_v2$hairdresser_ID, hair_recruit_data$pull_hairdresser_ID)
+
+hair_recruit_data$pull_hairdresser_ID[1435]
+hairdresser_database_v2$hairdresser_ID[1]
 
 # phone number
-hairdresser_database_v2$B11a_phonenumber <- str_remove(paste(hairdresser_database_v2$B11a_phonenumber, hair_recruit_data$B7_primary_phonenumber), " NA")
+hairdresser_database_v2$B11a_phonenumber <- str_remove(paste(hairdresser_database_v2$B11a_phonenumber, hair_recruit_data$B7_primary_phonenumber[match_vec]), " NA")
 
 # alternative phone number
-hairdresser_database_v2$hairdresser_alternative_phonenumber <- str_remove(paste(hairdresser_database_v2$hairdresser_alternative_phonenumber, hair_recruit_data$B7d_alternativephonnu), " NA")
+hairdresser_database_v2$hairdresser_alternative_phonenumber <- str_remove(paste(hairdresser_database_v2$hairdresser_alternative_phonenumber, hair_recruit_data$B7d_alternativephonnu[match_vec]), " NA")
 
 # name
-hairdresser_database_v2$B13_hairdressername <- str_remove(paste(hairdresser_database_v2$B13_hairdressername, hair_recruit_data$B1_name), " NA")
+hairdresser_database_v2$B13_hairdressername <- str_remove(paste(hairdresser_database_v2$B13_hairdressername, hair_recruit_data$B1_name[match_vec]), " NA")
 
 # Smartphone
-hairdresser_database_v2$smartphone <- ifelse(hair_recruit_data$B7_smartphone == 1, "Yes", "No")
+hairdresser_database_v2$smartphone <- ifelse(hair_recruit_data$B7_smartphone[match_vec] == 1, "Yes", "No")
 
 # Private Phone
-hairdresser_database_v2$private_phone <- ifelse(hair_recruit_data$B7_shared == 2, "Yes", "No")
+hairdresser_database_v2$private_phone <- ifelse(hair_recruit_data$B7_shared[match_vec] == 2, "Yes", "No")
 
 # Social Media Usage
 hair_recruit_data$B8a_whichone <- gsub("1", "Facebook", hair_recruit_data$B8a_whichone)
 hair_recruit_data$B8a_whichone <- gsub("2", "Whatsapp", hair_recruit_data$B8a_whichone)
 hair_recruit_data$B8a_whichone <- gsub("3", "Instagram", hair_recruit_data$B8a_whichone)
 hair_recruit_data$B8a_whichone <- gsub("4", "TikTok", hair_recruit_data$B8a_whichone)
-hairdresser_database_v2$social_media <- hair_recruit_data$B8a_whichone
+hairdresser_database_v2$social_media <- hair_recruit_data$B8a_whichone[match_vec]
 
 # Their state of mind around HPV 
-str_B9a_knowhpv <- ifelse(hair_recruit_data$B9a_knowhpv == 1, "Knows about HPV", "Doesn't know about HPV")
-str_B9b_knowhpvvacc <- ifelse(hair_recruit_data$B9b_knowhpvvacc == 1, "Knows about HPV Vaccine", "Doesn't know about HPV Vaccine")
-str_B9c_carehpv <- ifelse(hair_recruit_data$B9c_carehpv == 1, "Cares about preventing HPV", "Doesn't care about preventing HPV")
-str_B9d_causescervcancer <- ifelse(hair_recruit_data$B9d_causescervcancer == 1, "Believes HPV causes cancer", "Doesn't believe HPV causes cancer")
-str_B9e_protectsagainst <- ifelse(hair_recruit_data$B9e_protectsagainst == 1, "Believes HPV vaccine protects against wards", "Doesn't believe HPV vaccine protects about wards")
+str_B9a_knowhpv <- ifelse(hair_recruit_data$B9a_knowhpv[match_vec] == 1, "Knows about HPV", "Doesn't know about HPV")
+str_B9b_knowhpvvacc <- ifelse(hair_recruit_data$B9b_knowhpvvacc[match_vec] == 1, "Knows about HPV Vaccine", "Doesn't know about HPV Vaccine")
+str_B9c_carehpv <- ifelse(hair_recruit_data$B9c_carehpv[match_vec] == 1, "Cares about preventing HPV", "Doesn't care about preventing HPV")
+str_B9d_causescervcancer <- ifelse(hair_recruit_data$B9d_causescervcancer[match_vec] == 1, "Believes HPV causes cancer", "Doesn't believe HPV causes cancer")
+str_B9e_protectsagainst <- ifelse(hair_recruit_data$B9e_protectsagainst[match_vec] == 1, "Believes HPV vaccine protects against wards", "Doesn't believe HPV vaccine protects about wards")
 hairdresser_database_v2$hpv_state <- paste(str_B9a_knowhpv, str_B9b_knowhpvvacc, str_B9c_carehpv, str_B9d_causescervcancer, str_B9e_protectsagainst, sep = ", ")
 
 # Preferred Phone number
-hairdresser_database_v2$preferred_phonenumber <- ifelse(coalesce(hair_recruit_data$preferred_phonenumber_1, hair_recruit_data$preferred_phonenumber_2) == 2, "Primary Phonenumber", 
-       ifelse(coalesce(hair_recruit_data$preferred_phonenumber_1, hair_recruit_data$preferred_phonenumber_2) == 3, "Any", "Alternative Phonenumber"))
+hairdresser_database_v2$preferred_phonenumber <- ifelse(coalesce(hair_recruit_data$preferred_phonenumber_1[match_vec], hair_recruit_data$preferred_phonenumber_2[match_vec]) == 2, "Primary Phonenumber", 
+       ifelse(coalesce(hair_recruit_data$preferred_phonenumber_1[match_vec], hair_recruit_data$preferred_phonenumber_2[match_vec]) == 3, "Any", "Alternative Phonenumber"))
 
 # Onboarding Scheduling
 hair_recruit_data$onboarding_scheduling <- gsub("1", "Monday", hair_recruit_data$onboarding_scheduling)
@@ -560,13 +567,17 @@ hair_recruit_data$onboarding_scheduling <- gsub("5", "Friday", hair_recruit_data
 hair_recruit_data$onboarding_scheduling <- gsub("6", "Saturday", hair_recruit_data$onboarding_scheduling)
 hair_recruit_data$onboarding_scheduling <- gsub("7", "Sunday", hair_recruit_data$onboarding_scheduling)
 
-hairdresser_database_v2$scheduling_preferences <- paste(paste("Monday:", hair_recruit_data[,paste0("onboarding_time_slots_",1)]), 
-      paste("Tuesday:",  hair_recruit_data[,paste0("onboarding_time_slots_",2)]), 
-      paste("Wednesday:", hair_recruit_data[,paste0("onboarding_time_slots_",3)]), 
-      paste("Thursday:", hair_recruit_data[,paste0("onboarding_time_slots_",4)]), 
-      paste("Friday:", hair_recruit_data[,paste0("onboarding_time_slots_",5)]),
-      paste("Saturday:", hair_recruit_data[,paste0("onboarding_time_slots_",6)]), 
-      paste("Sunday:", hair_recruit_data[,paste0("onboarding_time_slots_",7)]))
+hairdresser_database_v2$scheduling_preferences <- paste(paste("Monday:", hair_recruit_data[match_vec,paste0("onboarding_time_slots_",1)]), 
+      paste("Tuesday:",  hair_recruit_data[match_vec,paste0("onboarding_time_slots_",2)]), 
+      paste("Wednesday:", hair_recruit_data[match_vec,paste0("onboarding_time_slots_",3)]), 
+      paste("Thursday:", hair_recruit_data[match_vec,paste0("onboarding_time_slots_",4)]), 
+      paste("Friday:", hair_recruit_data[match_vec,paste0("onboarding_time_slots_",5)]),
+      paste("Saturday:", hair_recruit_data[match_vec,paste0("onboarding_time_slots_",6)]), 
+      paste("Sunday:", hair_recruit_data[match_vec,paste0("onboarding_time_slots_",7)]))
+
+
+hairdresser_database_v2$hair_lon <- hair_recruit_data_ordered$geopoint_1.Longitude[match_vec]
+hairdresser_database_v2$hair_lat <- hair_recruit_data_ordered$geopoint_1.Latitude[match_vec]
 
 ```
 
@@ -576,6 +587,11 @@ hairdresser_database_v2$scheduling_preferences <- paste(paste("Monday:", hair_re
 
 hairdresser_database_v2 %>% 
   write.csv("Data Exports/hairdresser_database_v2.csv", row.names = F)
+
+# Location of SurveyIDs, Convert data format, Write to look at in QGIS
+hairdresser_locations <- SpatialPointsDataFrame(coords = cbind(hairdresser_database_v2$hair_lon, hairdresser_database_v2$hair_lat), data = hairdresser_database_v2, proj4string = CRS("EPSG:4326"))
+hairdresser_locations <- st_as_sf(hairdresser_locations)
+st_write(hairdresser_locations, dsn = "Data Exports/hairdresser_locations.shp", append = F)
 
 ```
 

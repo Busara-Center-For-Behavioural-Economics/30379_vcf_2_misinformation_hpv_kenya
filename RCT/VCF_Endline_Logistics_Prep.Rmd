@@ -1,0 +1,78 @@
+---
+title: "VCF_Endline_Prep"
+author: "Jonathan Karl"
+date: "2024-06-18"
+output: html_document
+---
+
+# Read relevant libraries
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(googlesheets4)
+library(sp)
+library(sf)
+```
+
+# Read Endline Panel
+
+```{r}
+
+# Read data
+baseline_data <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean_reduced.csv")[,-c(1:2)]
+
+# Prep the endline database given Dennis preferences
+endline_database_prep <- baseline_data %>% 
+  mutate_at(c("SubmissionDate","starttime","endtime"), as_datetime, format = "%Y-%m-%d %H:%M:%S") %>% 
+  mutate(submission_date_dateonly = floor_date(SubmissionDate, "day")) %>% 
+  dplyr::select(submission_date_dateonly, final_ID, B1_name, B2_gender, county_name, B0_cluster, B7_phonenumber, B7d_alternativephonnu, en_name, cluster_treatment_group, geopoint_recruitment.Latitude, geopoint_recruitment.Longitude) %>% 
+  mutate(gender = ifelse(B2_gender == 2, "Female", "Male"), .before = 3) %>% 
+dplyr::select(-B2_gender) %>% 
+  arrange(county_name, B0_cluster, geopoint_recruitment.Latitude, geopoint_recruitment.Longitude)
+
+# Format df
+endline_database_prep_export <- endline_database_prep %>% dplyr::select(final_ID, B1_name, gender, county_name, B0_cluster, B7_phonenumber, B7d_alternativephonnu, geopoint_recruitment.Latitude, geopoint_recruitment.Longitude)
+colnames(endline_database_prep_export) <- c("final_ID", "Caregiver_name", "Gender", "County", "Cluster_ID","Primary_Contact", "Alternative_Contact", "Geopoint_Lat", "Geopoint_Lon")
+
+# Export
+range_write(data = endline_database_prep_export, 
+            ss = "https://docs.google.com/spreadsheets/d/1BH4vi0MZoFPH6FzZxaDE3NkeRfCAaWWkgsS4EhIMzZk/edit#gid=2020644532",
+            sheet = "Endline Caregiver Database (all)",
+            range = "A1", 
+            reformat = F)
+
+```
+
+# Prep Pilot Sample
+
+```{r}
+
+set.seed(42)
+endline_pilot <- endline_database_prep_export %>% 
+  filter(Cluster_ID %in% c(50, 207, 267, 403)) %>% 
+  sample_n(140)
+
+range_write(data = endline_pilot, 
+            ss = "https://docs.google.com/spreadsheets/d/1BH4vi0MZoFPH6FzZxaDE3NkeRfCAaWWkgsS4EhIMzZk/edit#gid=2020644532",
+            sheet = "Endline Pilot Database",
+            range = "A1", 
+            reformat = F)
+
+```
+
+# Prep QGIS file with all Participant Locations
+
+```{r}
+
+# Location of SurveyIDs
+survey_locations <- SpatialPointsDataFrame(coords = cbind(endline_database_prep$geopoint_recruitment.Longitude, endline_database_prep$geopoint_recruitment.Latitude), data = endline_database_prep[,c("B0_cluster", "en_name", "county_name", "final_ID", "submission_date_dateonly", "cluster_treatment_group")], proj4string = CRS("EPSG:4326"))
+
+# Convert data format
+survey_locations <- st_as_sf(survey_locations)
+
+# Write to look at in QGIS
+st_write(survey_locations, dsn = "Data Exports/survey_locations_endline.shp", append = F)
+
+```
+

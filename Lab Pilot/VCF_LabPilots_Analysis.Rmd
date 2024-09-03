@@ -143,18 +143,17 @@ compute_auc <- function(truth_discernment = truth_discernment, true_false_coding
   # Iterate through each participant, compute hit-rate and false alarm rate at each decision-threshold --> compute AUC
   auc_all <- NULL
   for(i in 1:nrow(truth_discernment)){
-    
+
     hit_rate_all_thresholds <- NULL
     false_alarm_rate_all_thresholds <- NULL
-    
     for(threshold in 1:5){
       
       # Given a threshold, how did people perceive the post (true/false)
       perceived_binary_coded <- ifelse(truth_discernment[i,-1] > threshold, "Perceived_True", "Perceived_False")
       
       # Code the hit rate and false alarm rate
-      hit_rate <- sum(ifelse(perceived_binary_coded == "Perceived_False" & true_false_coding == FALSE, 1, 0))/(nrow(truth_discernment)/2)
-      false_alarm_rate <- sum(ifelse(perceived_binary_coded == "Perceived_False" & true_false_coding == TRUE, 1, 0))/(nrow(truth_discernment)/2)
+      hit_rate <- sum(ifelse(perceived_binary_coded == "Perceived_False" & true_false_coding == FALSE, 1, 0), na.rm = T)/(16/2)
+      false_alarm_rate <- sum(ifelse(perceived_binary_coded == "Perceived_False" & true_false_coding == TRUE, 1, 0), na.rm = T)/(16/2)
       
       # Add hit rate and false alarm rate to vector storing them for all thresholds
       hit_rate_all_thresholds <- c(hit_rate_all_thresholds, hit_rate)
@@ -162,7 +161,11 @@ compute_auc <- function(truth_discernment = truth_discernment, true_false_coding
       
     }
     # Compute AUC and add to vector
-    auc_temp <- AUC(false_alarm_rate_all_thresholds, hit_rate_all_thresholds)
+    if(length(unique(false_alarm_rate_all_thresholds)) < 2 | length(unique(hit_rate_all_thresholds)) < 2){
+      auc_temp <- NA
+    } else{
+      auc_temp <- AUC(false_alarm_rate_all_thresholds, hit_rate_all_thresholds)
+    }
     auc_all <- c(auc_all, auc_temp)
     
   }
@@ -478,7 +481,7 @@ names(manipulation_technique_actual) <- posts_base_order
 
 # Create temp df
 temp_df <- combined %>% 
-  select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, starts_with("survey.1.player.detect_misinfo_quiz"))
+  dplyr::select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, starts_with("survey.1.player.detect_misinfo_quiz"))
 
 temp_df[temp_df == ""] <- NA 
 temp_df <- temp_df %>% 
@@ -555,7 +558,7 @@ participant_row_clean <- process_vectors(participant_row_split)
 
 
 tblFun(sapply(participant_row_clean, function(i) any(i %in% "Discrediting opponents")))
-tblFun(sapply(participant_row_clean[manipulativeness_identification$survey.1.player.detect_misinfo_quiz7_1 == "Yes" & manipulativeness_identification$introduction.1.player.assigned_group %in% "Debunking_Doctor"], function(i) any(i %in% "Discrediting opponents")))
+# tblFun(sapply(participant_row_clean[manipulativeness_identification$survey.1.player.detect_misinfo_quiz7_1 == "Yes" & manipulativeness_identification$introduction.1.player.assigned_group %in% "Debunking_Doctor"], function(i) any(i %in% "Discrediting opponents")))
 
 
 
@@ -1321,7 +1324,7 @@ manipulation_technique_actual <- list("1" = c("Spreading Conspiracy theories", "
 ```{r}
 # Create temp df
 temp_df <- combined %>% 
-  select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, contains(paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_3")))
+  dplyr::select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, contains(paste0("survey.1.player.detect_misinfo_quiz", 1:16, "_3")))
 
 temp_df[temp_df == ""] <- NA 
 temp_df <- temp_df %>% 
@@ -1464,7 +1467,7 @@ manipulativeness_actual_bool <- ifelse(manipulativeness_actual == "Yes", TRUE, F
 
 # Create temp df
 temp_df <- combined %>% 
-  select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, starts_with("survey.1.player.detect_misinfo_quiz"))
+  dplyr::select(introduction.1.player.assigned_group, introduction.1.player.full_posts_order, introduction.1.player.bottom_posts_order, starts_with("survey.1.player.detect_misinfo_quiz"))
 
 temp_df[temp_df == ""] <- NA 
 temp_df <- temp_df %>% 
@@ -1596,7 +1599,7 @@ TukeyHSD(aov(rowMeans(sharing_propensity_temp, na.rm = T) ~ temp_df$introduction
 ```{r}
 # Create temp df
 temp_df <- combined %>% 
-  select(introduction.1.player.assigned_group, survey.1.player.vax_hes_1, survey.1.player.vax_hes_2)
+  dplyr::select(introduction.1.player.assigned_group, survey.1.player.vax_hes_1, survey.1.player.vax_hes_2)
 
 # Remove NA rows
 temp_df[temp_df == ""] <- NA 
@@ -1625,7 +1628,7 @@ tblFun_II(temp_df$survey.1.player.vax_hes_1, temp_df$introduction.1.player.assig
 tblFun_II(temp_df$survey.1.player.vax_hes_2, temp_df$introduction.1.player.assigned_group)
 
 # 2. Test the difference
-TukeyHSD(aov(survey.1.player.vax_hes_2 ~ introduction.1.player.assigned_group, data = temp_df))
+TukeyHSD(aov(survey.1.player.vax_hes_1 ~ introduction.1.player.assigned_group, data = temp_df))
 TukeyHSD(aov(survey.1.player.vax_hes_2 ~ introduction.1.player.assigned_group, data = temp_df))
 
 ```
@@ -1647,7 +1650,7 @@ TukeyHSD(aov(survey.1.player.vax_hes_2 ~ introduction.1.player.assigned_group, d
 ```{r}
 # Create temp df
 temp_df <- combined %>% 
-  select(introduction.1.player.assigned_group, paste0("survey.1.player.vax_hes_",3:12))
+  dplyr::select(introduction.1.player.assigned_group, paste0("survey.1.player.vax_hes_",3:12))
 
 # Remove NA rows
 temp_df[temp_df == ""] <- NA 
@@ -1719,7 +1722,7 @@ TukeyHSD(aov(survey.1.player.vax_hes_12 ~ introduction.1.player.assigned_group, 
 ```{r}
 # Create temp df
 temp_df <- combined %>% 
-  select(introduction.1.player.assigned_group, paste0("survey.1.player.vax_beh_int_",1:5))
+  dplyr::select(introduction.1.player.assigned_group, paste0("survey.1.player.vax_beh_int_",1:5))
 
 # Remove NA rows
 temp_df[temp_df == ""] <- NA 

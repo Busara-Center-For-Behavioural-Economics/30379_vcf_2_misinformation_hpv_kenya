@@ -1,0 +1,193 @@
+---
+title: "VCF_Endline_Add_More_Participants_from_Baseline"
+author: "Jonathan Karl"
+date: "2024-07-08"
+output: html_document
+---
+
+# Setup
+
+```{r}
+
+# Clean the environment
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "lubridate")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+```{r}
+range01 <- function(x){(x-min(x))/(max(x)-min(x))}
+```
+
+
+
+# Read Data
+
+```{r}
+
+baseline_reduced <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean_reduced.csv")[,-c(1:2)]
+baseline_full <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean.csv")[,-1]
+priority <- readxl::read_xlsx("Data Exports/Cluster Priority_Additional list.xlsx")
+priority2 <- readxl::read_xlsx("Data Exports/Cluster Priority_Additional list2.xlsx")
+
+```
+
+# V1 
+
+```{r}
+
+# Create probability weights  
+priority$left_to_100 <- 100 - priority$Target
+priority$Progress_left <- 1 - priority$Progress
+priority$probability_weight <- range01(priority$left_to_100) + priority$Progress_left
+probability_weights <- priority %>% 
+  dplyr::select(B0_cluster, probability_weight)
+
+# Create data frame that will serve as the repository to sample additional people
+baseline_eligible_to_add <- baseline_full %>% 
+  filter(!(final_ID %in% baseline_reduced$final_ID)) %>% 
+  filter(cluster_treatment_group %in% c("Control", "Online_Only"))
+
+# Total rows to sample
+total_sample_size <- 1200
+
+# Calculate the number of rows to sample for each cluster based on weights
+probability_weights <- probability_weights %>%
+  mutate(probability_share = probability_weight/sum(probability_weight)) %>% 
+  mutate(sample_size = round(probability_share * total_sample_size))
+
+# Merge weights with the original dataframe
+baseline_eligible_to_add_prop_weights_merged <- baseline_eligible_to_add %>%
+  left_join(probability_weights, by = "B0_cluster")
+baseline_eligible_to_add_prop_weights_merged$sample_size[is.na(baseline_eligible_to_add_prop_weights_merged$sample_size)] <- 0
+
+# Sample rows based on the adjusted sample sizes
+set.seed(42)
+new_list_caregivers <- baseline_eligible_to_add_prop_weights_merged %>%
+  group_by(B0_cluster) %>%
+  group_modify(~ {
+    n <- first(.x$sample_size)
+    n <- min(n, nrow(.x))  # Ensure n does not exceed available rows
+    .x[sample(nrow(.x), n), ]
+  }) %>%
+  ungroup()
+
+new_list_caregivers_exportready <- new_list_caregivers %>% 
+  mutate(B2_gender = ifelse(B2_gender == 2, "Female", ifelse(B2_gender == 1, "Male", "Other"))) %>% 
+  dplyr::select(final_ID, B1_name, B2_gender, county_name_fo_location, B0_cluster, B7_phonenumber, B7d_alternativephonnu, geopoint_recruitment.Latitude, geopoint_recruitment.Longitude)
+
+range_write(data = new_list_caregivers_exportready, 
+            ss = "https://docs.google.com/spreadsheets/d/1BH4vi0MZoFPH6FzZxaDE3NkeRfCAaWWkgsS4EhIMzZk/edit?gid=872563687#gid=872563687",
+            sheet = "Endline Caregiver Database (all)", 
+            range = "A5061",
+            col_names = F,
+            reformat = F)
+
+write.csv(new_list_caregivers, "Data Exports/vcf2_rct_baseline_caregivers_additional_for_endline.csv")
+
+
+```
+
+
+
+```{r}
+
+# Prep dfs for export
+baseline_reduced <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean_reduced.csv")[,-c(1:2)]
+new_list_caregivers <- new_list_caregivers %>% 
+  relocate(B0_cluster, .after = county_name_fo_location) %>% 
+  dplyr::select(-no_number_but_mobile, -insufficient_info_hairdresser, -probability_weight, - probability_share, -sample_size) %>% 
+  mutate(hairdresser_ID = NA)
+
+# Get it ready for export to add it to SurveyCTO
+baseline_reduced_plus_additional_exportready <- rbind(baseline_reduced, new_list_caregivers) %>% 
+  dplyr::select(-En_Name)
+write.csv(baseline_reduced_plus_additional_exportready, "Data Exports/vcf2_rct_baseline_caregivers_reduced_plus_additional_for_endline.csv")
+
+```
+
+# V2 
+
+```{r}
+
+# Create probability weights  
+priority2$left_to_100 <- 100 - priority2$Target
+priority2$Progress_left <- 1 - priority2$Progress
+priority2$probability_weight <- range01(priority2$left_to_100) + priority2$Progress_left
+probability_weights <- priority2 %>% 
+  dplyr::select(B0_cluster, probability_weight)
+
+# Create data frame that will serve as the repository to sample additional people
+baseline_eligible_to_add <- baseline_full %>% 
+  filter(!(final_ID %in% baseline_reduced$final_ID)) %>% 
+  filter(cluster_treatment_group %in% c("Control", "Online_Only"))
+
+# Total rows to sample
+total_sample_size <- 1200
+
+# Calculate the number of rows to sample for each cluster based on weights
+probability_weights <- probability_weights %>%
+  mutate(probability_share = probability_weight/sum(probability_weight)) %>% 
+  mutate(sample_size = round(probability_share * total_sample_size))
+
+# Merge weights with the original dataframe
+baseline_eligible_to_add_prop_weights_merged <- baseline_eligible_to_add %>%
+  left_join(probability_weights, by = "B0_cluster")
+baseline_eligible_to_add_prop_weights_merged$sample_size[is.na(baseline_eligible_to_add_prop_weights_merged$sample_size)] <- 0
+
+# Sample rows based on the adjusted sample sizes
+set.seed(42)
+new_list_caregivers_v2 <- baseline_eligible_to_add_prop_weights_merged %>%
+  group_by(B0_cluster) %>%
+  group_modify(~ {
+    n <- first(.x$sample_size)
+    n <- min(n, nrow(.x))  # Ensure n does not exceed available rows
+    .x[sample(nrow(.x), n), ]
+  }) %>%
+  ungroup()
+
+new_list_caregivers_exportready_v2 <- new_list_caregivers_v2 %>% 
+  mutate(B2_gender = ifelse(B2_gender == 2, "Female", ifelse(B2_gender == 1, "Male", "Other"))) %>% 
+  dplyr::select(final_ID, B1_name, B2_gender, county_name_fo_location, B0_cluster, B7_phonenumber, B7d_alternativephonnu, geopoint_recruitment.Latitude, geopoint_recruitment.Longitude)
+
+range_write(data = new_list_caregivers_exportready_v2, 
+            ss = "https://docs.google.com/spreadsheets/d/1BH4vi0MZoFPH6FzZxaDE3NkeRfCAaWWkgsS4EhIMzZk/edit?gid=872563687#gid=872563687",
+            sheet = "Endline Caregiver Database (all)", 
+            range = "A6122",
+            col_names = F,
+            reformat = F)
+
+write.csv(new_list_caregivers_v2, "Data Exports/vcf2_rct_baseline_caregivers_additional_for_endline_V2.csv")
+
+
+```
+
+
+
+```{r}
+
+# Prep dfs for export
+new_list_caregivers_v2 <- new_list_caregivers_v2 %>% 
+  relocate(B0_cluster, .after = county_name_fo_location) %>% 
+  dplyr::select(-no_number_but_mobile, -insufficient_info_hairdresser, -probability_weight, - probability_share, -sample_size) %>% 
+  mutate(hairdresser_ID = NA)
+
+# Get it ready for export to add it to SurveyCTO
+baseline_reduced_plus_additional_exportready <- rbind(baseline_reduced, new_list_caregivers, new_list_caregivers_v2) %>% 
+  dplyr::select(-En_Name)
+write.csv(baseline_reduced_plus_additional_exportready, "Data Exports/vcf2_rct_baseline_caregivers_reduced_plus_additional_for_endline.csv")
+
+```

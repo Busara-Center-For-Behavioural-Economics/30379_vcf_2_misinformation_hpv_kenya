@@ -1,0 +1,323 @@
+---
+title: "VCF_Hairdresser_Onboarding"
+author: "Jonathan Karl"
+date: "2024-02-22"
+output: html_document
+---
+
+# 0. Setup
+
+```{r}
+
+# Clean the environment
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "lubridate", "sp", "sf")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+# 1. Read Data
+
+```{r}
+
+hairdresser_database_v4 <- read.csv("Data Exports/hairdresser_database_v4.csv") %>% 
+  dplyr::select(-hair_lon, -hair_lat)
+
+baseline_clean_reduced <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean_reduced.csv")
+
+```
+
+# 2. Setup Tracker
+
+## Order the hairdresser database
+
+```{r}
+
+# First figure out which are the dominant counties
+dominant_county <- unlist(lapply(lapply(str_extract_all(hairdresser_database_v4$county_name, "(?<=\\().+?(?=\\))"), as.numeric), which.max))
+table(dominant_county)
+dominant_county_formatted <- str_trim(str_remove_all(substr(hairdresser_database_v4$county_name, start = 1, stop = 8), "\\("))
+hairdresser_database_v4$dominant_county <- dominant_county_formatted
+
+
+# Second figure out which are the dominant clusters per hairdresser to enable sorting
+dominant_cluster <- unlist(lapply(lapply(str_extract_all(hairdresser_database_v4$cluster_ID, "(?<=\\().+?(?=\\))"), as.numeric), which.max))
+
+dominant_1 <- hairdresser_database_v4$cluster_ID[which(dominant_cluster == 1)]
+dominant_1_formatted <- str_trim(str_remove_all(substr(dominant_1, start = 1, stop = 3), "\\("))
+
+dominant_2 <- hairdresser_database_v4$cluster_ID[which(dominant_cluster == 2)]
+dominant_2_formatted <- str_remove_all(str_trim(str_remove_all(substr(dominant_2, start = nchar(dominant_2)-7, stop = nchar(dominant_2)), "\\([0-9]*\\)")),", ")
+
+hairdresser_database_v4$dominant_cluster <- NA
+hairdresser_database_v4$dominant_cluster[which(dominant_cluster == 1)] <- dominant_1_formatted
+hairdresser_database_v4$dominant_cluster[which(dominant_cluster == 2)] <- dominant_2_formatted
+hairdresser_database_v4$dominant_cluster <- as.numeric(hairdresser_database_v4$dominant_cluster)
+
+# Then figure out how many participants per cluster to enable sorting clusters with fewer participants to the top
+clusters_n <- baseline_clean_reduced %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) %>%
+  mutate(B0_cluster = as.character(B0_cluster), n = as.character(n))
+
+clusters_n_map <- deframe(clusters_n)
+cluster_n_mapped <- as.numeric(unname(clusters_n_map[as.character(hairdresser_database_v4$dominant_cluster)]))
+hairdresser_database_v4$cluster_n <- cluster_n_mapped
+
+
+# Create new data.frame
+hairdresser_database_v4_ordered <- hairdresser_database_v4 %>% 
+  mutate(caregiver_sample_size_in_cluster = cluster_n, .after = 6) %>% 
+  arrange(dominant_county, caregiver_sample_size_in_cluster, dominant_cluster) %>% 
+  dplyr::select(-dominant_cluster, -cluster_n)
+
+```
+
+## Upload database 
+
+```{r}
+
+range_clear(ss = "https://docs.google.com/spreadsheets/d/1c9Uw84mQqAnV44OS_VDqK9rRlcWkEkK3WP7iT3b-BOc/edit#gid=0", 
+            sheet = "Hairdressers_List_v2",
+            range = "A2:T2000")
+
+range_write(ss = "https://docs.google.com/spreadsheets/d/1c9Uw84mQqAnV44OS_VDqK9rRlcWkEkK3WP7iT3b-BOc/edit#gid=0", 
+            data = hairdresser_database_v4_ordered,
+            sheet = "Hairdressers_List_v2",
+            range = "A2", 
+            reformat = F,
+            col_names = F)
+
+```
+
+# 3. Adjustments to the database
+
+```{r}
+
+# Hairdresser Database of hairdressers that were recruited
+hairdresser_database_v2 <- read.csv("Data Exports/hairdresser_database_v2.csv")
+
+# Add some hairdressers that were onboarded but SFOs forgot to report that
+hairdresser_database_v2[hairdresser_database_v2$hairdresser_ID %in% c("3791I8", "1647Y6", "8160V7", "6759O2"),] %>% 
+  dplyr::select(-hair_lon, -hair_lat) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1c9Uw84mQqAnV44OS_VDqK9rRlcWkEkK3WP7iT3b-BOc/edit#gid=890082208",
+              sheet = "Hairdressers_List_v2",
+              range = paste0("A",nrow(hairdresser_database_v4_ordered)+2),
+              col_names = F,
+              reformat = F)
+
+# Add some more hairdressers to hit the target of onboarded hairdressers of 1025
+onboarding_sheet <- read_sheet("https://docs.google.com/spreadsheets/d/1c9Uw84mQqAnV44OS_VDqK9rRlcWkEkK3WP7iT3b-BOc/edit#gid=890082208",
+                               sheet = "Hairdressers_List_v2")
+
+# Hairdresser Database of hairdressers that were recruited
+temp <- hairdresser_database_v2 %>% 
+  filter(!(hairdresser_ID %in% onboarding_sheet$hairdresser_ID)) %>% 
+  arrange(desc(smartphone)) %>% 
+  arrange(desc(customers_per_hairdresser)) %>% 
+  head(n = 150) %>% 
+  dplyr::select(-hair_lon, -hair_lat)
+
+range_write(data = temp, 
+            ss = "https://docs.google.com/spreadsheets/d/1c9Uw84mQqAnV44OS_VDqK9rRlcWkEkK3WP7iT3b-BOc/edit#gid=890082208",
+            sheet = "Hairdressers_List_v2",
+            range = paste0("A",nrow(hairdresser_database_v4_ordered)+4+2),
+            reformat = F,
+            col_names = F)
+
+hairdresser_database_v4$dominant_county <- NULL
+hairdresser_database_v4$dominant_cluster <- NULL
+hairdresser_database_v4$cluster_n <- NULL
+
+# Split up a hairdresser -- WE ARE TRYING TO FIND OUT WHICH OF THE TWO THAT HAVE THE SAME ID THE CAREGIVER 90148Nov13124857 ACTUALLY GOES TO
+which(onboarding_sheet$hairdresser_ID == "3791I8")+1
+# Beth Kiarie, 0721172535
+# Rose Waithaka, 0725297290
+
+
+# Export Hairdresser Database V5
+hairdresser_database_v6 <- rbind(hairdresser_database_v4,
+      hairdresser_database_v2[hairdresser_database_v2$hairdresser_ID %in% c("3791I8", "1647Y6", "8160V7", "6759O2"),] %>% 
+  dplyr::select(-hair_lon, -hair_lat),
+  temp)
+
+write.csv(hairdresser_database_v6, "Data Exports/hairdresser_database_v6.csv")
+
+```
+
+# 4. Quality Control
+
+## 4.1 Call-backs to hairdressers to see if FOs do their job
+
+```{r}
+
+visit_logs_raw <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1BO-YCncRnUabR9hUwvlHo19Un77TAruY_p3mVsrQcWQ/edit#gid=0",
+           sheet = "data")
+visit_logs_raw$SubmissionDate <-  as_datetime(visit_logs_raw$SubmissionDate)
+visit_logs_raw$submission_date_dateonly <- floor_date(visit_logs_raw$SubmissionDate, "day")
+
+
+# Find out the last date that was uploaded and then filter for dates larger than that.
+regular_callbacks_so_far <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1BO-YCncRnUabR9hUwvlHo19Un77TAruY_p3mVsrQcWQ/edit#gid=0",
+           sheet = "Callbacks to Hairdressers")
+
+
+ifelse(duplicated(regular_callbacks_so_far$`Visit ID`), "Duplicate Visit Log (Ignore)", "")
+
+
+set.seed(42)
+temp_df2 <- visit_logs_raw %>%
+  filter(submission_date_dateonly > "2024-02-22 UTC") %>% 
+  filter(submission_date_dateonly > max(as_date(regular_callbacks_so_far$SubmissionDateTime) + day(1), na.rm = T)) %>% 
+  filter(!(final_survey_ID %in% regular_callbacks_so_far$`Visit ID`)) %>% 
+  filter(submission_date_dateonly > "2024-05-19 UTC") %>% # Account for break through IRB review
+  group_by(submission_date_dateonly) %>% 
+  mutate(submission_date_dateonly = as.character(submission_date_dateonly)) %>% 
+  slice_sample(n = 40) %>% 
+  dplyr::select(final_survey_ID, pull_hairdresser_ID, submission_date_dateonly, en_name, pull_hairdressername, pull_hairdresser_phonenumber, kind_visit, visit_details, visit_challenges, visit_materials_shared)
+
+range_write(temp_df2, 
+            ss = "https://docs.google.com/spreadsheets/d/1BO-YCncRnUabR9hUwvlHo19Un77TAruY_p3mVsrQcWQ/edit#gid=0",
+           sheet = "Callbacks to Hairdressers",
+            range = paste0("A",nrow(regular_callbacks_so_far)+2),
+            reformat = F,
+            col_names = F)
+
+```
+
+## 4.2 Call-back to Caregivers to check if Hairdressers do their job
+
+```{r}
+
+# Access latest database for hairdressers
+current_list_hairdressers <- read_sheet("https://docs.google.com/spreadsheets/d/1BO-YCncRnUabR9hUwvlHo19Un77TAruY_p3mVsrQcWQ/edit#gid=1172908867", sheet = "Hairdresser Follow-Ups Tracker", skip = 2)[-1,]
+
+# Which hairdressers are still onboard?
+hairdressers_still_part_of_study <- current_list_hairdressers$`Hairdresser ID`[current_list_hairdressers$`Still Part of the Study` == "Yes" | is.na(current_list_hairdressers$`Still Part of the Study`)]
+
+# How many callbacks are already in the list?
+callbacks_so_far_to_caregivers <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1rhkGAVcmHSuLbDduOat4gVZfCavgJu-j-dW96A2r3zc/edit#gid=2038834640",
+           sheet = "Callbacks to Caregivers")
+
+# Set seed to keep this constant
+#set.seed(42)
+
+# Sample hairdressers to check on
+new_sampled_hairdresers <- hairdressers_still_part_of_study
+
+# Sample one caregiver for each hairdresser
+caregivers_to_ask <- sapply(str_split(hairdresser_database_v6$response_final_IDs[hairdresser_database_v6$hairdresser_ID %in% new_sampled_hairdresers], ", "), function(i) sample(i, 1))
+
+caregivers_to_ask <- unlist(str_split(hairdresser_database_v6$response_final_IDs[hairdresser_database_v6$hairdresser_ID %in% new_sampled_hairdresers], ", "))
+
+
+# Which of the caregivers to ask are still in the sample?
+which_caregivers_still_in_sample <- caregivers_to_ask %in% baseline_clean_reduced$final_ID 
+
+# Shorten vector for hairdressers which in this run have a corresponding caregiver
+new_sampled_hairdresers_short <- new_sampled_hairdresers[which_caregivers_still_in_sample]
+
+# Create new dataframe for FOs to check on caregivers
+temp_data <- cbind(hairdresser_ID = new_sampled_hairdresers_short, baseline_clean_reduced[baseline_clean_reduced$final_ID %in% caregivers_to_ask[which_caregivers_still_in_sample],] %>% 
+  dplyr::select(final_ID, county_name_fo_location, B1_name, B7_phonenumber, B7d_alternativephonnu, B13_hairdressername, B13_hairdresser_nickname, B14_hairdresserlocation))
+
+# Only add data points that are not yet in the call back data
+temp_data <- temp_data[!(temp_data$final_ID %in% callbacks_so_far_to_caregivers$Final_ID),]
+
+# Write to googlesheet
+range_write(temp_data, 
+            ss = "https://docs.google.com/spreadsheets/d/1rhkGAVcmHSuLbDduOat4gVZfCavgJu-j-dW96A2r3zc/edit#gid=2038834640",
+           sheet = "Callbacks to Caregivers",
+            range = paste0("A",nrow(callbacks_so_far_to_caregivers)+2),
+            reformat = F,
+            col_names = F)
+
+```
+
+### 4.2.1 Compute Performance Stats by Hairdresser
+
+```{r}
+
+# Access latest database for hairdressers
+current_list_hairdressers <- read_sheet("https://docs.google.com/spreadsheets/d/1BO-YCncRnUabR9hUwvlHo19Un77TAruY_p3mVsrQcWQ/edit#gid=1172908867", sheet = "Hairdresser Follow-Ups Tracker", skip = 2)[-1,]
+
+# Access the results of the caregiver callbacks
+caregivers_reports <- read_sheet("https://docs.google.com/spreadsheets/d/1rhkGAVcmHSuLbDduOat4gVZfCavgJu-j-dW96A2r3zc/edit#gid=2038834640",
+                                 sheet = "Callbacks to Caregivers")
+
+# Join the data
+joined_hairdresser_caregiver_callbacks <- left_join(caregivers_reports, current_list_hairdressers, by = "Hairdresser ID")
+
+joined_hairdresser_caregiver_callbacks %>% 
+  group_by(`Hairdresser ID`) %>% 
+  summarise(Hairdresser_Name = unique(`Hairdresser Name.y`),
+            FO_responsible = unique(`Assigned FO`),
+            visited = mean(`Have you visited/ interacted with your hairdresser over the past 3 months?` == "Yes", na.rm = T),
+            discussion_hpv = mean(`Did you Have any discussion with your hairdresser about HPV and HPV Vaccine?` == "Yes", na.rm = T),
+            discussion_misinformation = mean(`Did you have any discussion about misinformation and how to identify whether information is true or false and mostly to do with HPV and HPV vaccine?(FO Note: Check whether they have been told about Debunking and Inoculation/D.E.P.I.C.T from their explanation)` == "Yes", na.rm = T),
+            materials_seen = mean(`Did the hairdresser show/share with you any materials (videos, posters) with you when you visited or interacted with him/her?` == "Yes", na.rm = T)) %>% 
+  arrange(FO_responsible) %>% 
+  head(n = 996) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1rhkGAVcmHSuLbDduOat4gVZfCavgJu-j-dW96A2r3zc/edit#gid=2038834640",
+              sheet = "Hairdresser Performance",
+              range = "A2",
+              reformat = F,
+              col_names = F)
+
+
+joined_hairdresser_caregiver_callbacks %>% 
+  group_by(`Hairdresser ID`) %>% 
+  summarise(Hairdresser_Name = unique(`Hairdresser Name.y`),
+            FO_responsible = unique(`Assigned FO`),
+            visited = mean(`Have you visited/ interacted with your hairdresser over the past 3 months?` == "Yes", na.rm = T),
+            discussion_hpv = mean(`Did you Have any discussion with your hairdresser about HPV and HPV Vaccine?` == "Yes", na.rm = T),
+            discussion_misinformation = mean(`Did you have any discussion about misinformation and how to identify whether information is true or false and mostly to do with HPV and HPV vaccine?(FO Note: Check whether they have been told about Debunking and Inoculation/D.E.P.I.C.T from their explanation)` == "Yes", na.rm = T),
+            materials_seen = mean(`Did the hairdresser show/share with you any materials (videos, posters) with you when you visited or interacted with him/her?` == "Yes", na.rm = T)) %>% 
+  arrange(FO_responsible) %>% 
+  head(n = 996) %>% 
+  group_by(FO_responsible) %>% 
+  summarise(visited = mean(visited, na.rm = T),
+            discussion_hpv = mean(discussion_hpv, na.rm = T),
+            discussion_misinformation = mean(discussion_misinformation, na.rm = T),
+            materials_seen = mean(materials_seen, na.rm = T)) %>% 
+  arrange(desc(visited), desc(discussion_hpv)) %>%
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1rhkGAVcmHSuLbDduOat4gVZfCavgJu-j-dW96A2r3zc/edit#gid=2038834640",
+              sheet = "Hairdresser Performance by FO",
+              range = "A2",
+              reformat = F,
+              col_names = F)
+
+```
+
+
+## 4.3 Check the visit logs for important questions & challenges
+
+```{r}
+
+
+all_questions <- visit_logs_raw$visit_questions
+all_questions <- str_replace_all(all_questions, "NA|Na|N/A|None|No question|No|NONE", "")
+all_questions[all_questions == ""] <- NA
+all_questions <- na.omit(all_questions)
+
+
+all_challenges <- visit_logs_raw$visit_challenges
+all_challenges <- str_replace_all(all_challenges, "NA|Na|N/A|None|No question|No|NONE|No challenge|No challenges", "")
+all_challenges[all_challenges == ""] <- NA
+all_challenges <- na.omit(all_challenges)
+
+```
+
+

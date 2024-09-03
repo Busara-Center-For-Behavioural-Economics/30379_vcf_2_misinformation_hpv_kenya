@@ -16,7 +16,7 @@ rm(list = ls())
 knitr::opts_knit$set(options(scipen=999))
 
 # Install and load all the packages that will be used for analysis
-pkgs <- c("tidyverse", "googlesheets4", "lubridate")
+pkgs <- c("tidyverse", "googlesheets4", "lubridate", "sp", "sf", "WebPower")
 
 miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
 if(length(miss_pkgs)>0){
@@ -47,11 +47,9 @@ hairdresser_database_v2 <- read.csv("Data Exports/hairdresser_database_v2.csv")
 # Cleaned Caregiver Dataset
 baseline_caregivers_clean <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
 
-
 # Merge data
 hairdresser_database_v2_separated <- hairdresser_database_v2 %>%
   separate_rows(response_final_IDs, convert = TRUE)
-
 merged_vcf_database <- merge(hairdresser_database_v2_separated, baseline_caregivers_clean, by.x = "response_final_IDs", by.y = "final_ID", all = TRUE)
 
 # Remove all respondents which are in an offline group but don't have a matching hairdresser
@@ -78,11 +76,13 @@ cluster_sizes <- merged_vcf_database %>% group_by(B0_cluster) %>%
 
 ```{r}
 
+# Set Seed
+set.seed(123)
+
 # Priorities
 # maximise Cluster Size (max)
 # minimise DSA
 # maximise people per hairdresser
-# minimise closeness of hairdressers
 # minimise hairdressers without smartphones
 
 # Create df with all information based on which we will filter
@@ -106,14 +106,21 @@ weights_customer_per_hair[is.na(weights_customer_per_hair)] <- mean(weights_cust
 weights_smartphone_hairdresser <- ifelse(filtering_df$hairdresser_smartphone_access == "Yes", 1, 0.5)
 weights_smartphone_hairdresser[is.na(weights_smartphone_hairdresser)] <- mean(weights_smartphone_hairdresser, na.rm = T)
 
+
+############### Hairdresser Weights
+weights_customer_per_hair_II <- hairdresser_database_v2$customers_per_hairdresser
+weights_smartphone_hairdresser_II <- ifelse(hairdresser_database_v2$smartphone == "Yes", 1, 0.5)
+weights_county_II <- ifelse(str_detect(hairdresser_database_v2$county_name, "Nairobi"), 1, 0.5)
+weights_cluster_size_II <- (hairdresser_database_v2$caregiver_sample_size_in_cluster*-1) + max(hairdresser_database_v2$caregiver_sample_size_in_cluster)+1
+
 # Create a single probability weight index vector helper function
 scale_values <- function(x){(x-min(x))/(max(x)-min(x))}
 
 # Optimise this
-set.seed(123)
 optimiser_df <- data.frame()
 hairdresser_ids_ls <- list()
-caregiver_ids_ls <- list
+caregiver_ids_ls <- list()
+hairdresser_IDs_consistent <- hairdresser_database_v2$hairdresser_ID
 
 which <- c("plain", "exp", "scaled")
 county_count <- 1
@@ -122,19 +129,34 @@ smartphone_hairdresser_count <- 1
 customer_per_hair_count <- 1
 overall_count <- 1
 
-for(county_w in list(weights_county, weights_county**2, scale_values(weights_county))){
-  for(cluster_size_n_w in list(weights_cluster_size, weights_cluster_size**2, scale_values(weights_cluster_size))){
-    for(smartphone_hairdresser_w in list(weights_smartphone_hairdresser, weights_smartphone_hairdresser**2, scale_values(weights_smartphone_hairdresser))){
-      for(customer_per_hair_w in list(weights_customer_per_hair, weights_customer_per_hair**2, scale_values(weights_customer_per_hair))){
-        for(n_hair in seq(from = 500, to = 2000, by = 100)){
+for(county_w in list(list(weights_county, weights_county_II), 
+                     list(weights_county**2, weights_county_II**2), 
+                     list(scale_values(weights_county), scale_values(weights_county_II)))){
+  
+  for(cluster_size_n_w in list(list(weights_cluster_size, weights_cluster_size_II),
+                               list(weights_cluster_size**2, weights_cluster_size_II**2), 
+                               list(scale_values(weights_cluster_size), scale_values(weights_cluster_size_II)))){
+    
+    for(smartphone_hairdresser_w in list(weights_smartphone_hairdresser_II, 
+                                         weights_smartphone_hairdresser_II**2, 
+                                         scale_values(weights_smartphone_hairdresser_II))){
+      
+      for(customer_per_hair_w in list(weights_customer_per_hair_II,
+                                      weights_customer_per_hair_II**2, 
+                                      scale_values(weights_customer_per_hair_II))){
+        
+        for(n_hair in seq(from = 800, to = 1800, by = 25)){
           
           # Create weights for hairdresser selection
-          probability_weights_hair <- county_w + cluster_size_n_w + smartphone_hairdresser_w + customer_per_hair_w
+          probability_weights_hair <- county_w[[2]] + cluster_size_n_w[[2]] + smartphone_hairdresser_w + customer_per_hair_w
           
           # First select hairdressers
-          sampled_hairIDs <- sample(x = filtering_df$hairdresser_ID[!is.na(filtering_df$hairdresser_ID)],
+          sampled_hairIDs <- sample(x = hairdresser_database_v2$hairdresser_ID,
                                       size = n_hair,
-                                      prob = probability_weights_hair[!is.na(filtering_df$hairdresser_ID)])
+                                      prob = probability_weights_hair)
+          
+          ids_to_remove <- !(hairdresser_IDs_consistent %in% sampled_hairIDs)
+          hairdresser_IDs_consistent <- hairdresser_IDs_consistent[!ids_to_remove]
           
           hairdresser_ids_ls <- c(hairdresser_ids_ls, list(sampled_hairIDs))
           
@@ -142,13 +164,13 @@ for(county_w in list(weights_county, weights_county**2, scale_values(weights_cou
           offline_treatment_surveyIDs <- filtering_df$final_ID[filtering_df$hairdresser_ID %in% sampled_hairIDs]
           
           # Create weights for remaining participants
-          probability_weights <- county_w + cluster_size_n_w + smartphone_hairdresser_w + customer_per_hair_w
+          probability_weights <- county_w[[1]] + cluster_size_n_w[[1]]
           
           # Sample as many non-offline surveyIDs
           sampled_surveyIDs_non_offline <- sample(x = filtering_df$final_ID[is.na(filtering_df$hairdresser_ID)],
                                       size = length(offline_treatment_surveyIDs),
                                       prob = probability_weights[is.na(filtering_df$hairdresser_ID)])
-          survey_n <- length(offline_treatment_surveyIDs)*2
+          survey_n <- length(c(offline_treatment_surveyIDs, sampled_surveyIDs_non_offline))
           
           
           # Filter the dataframe
@@ -189,6 +211,8 @@ for(county_w in list(weights_county, weights_county**2, scale_values(weights_cou
           power_calc <- wp.crt2arm(n = mean_n, J = 108/2, icc = 0.02, alpha = 0.05, power = 0.8)
           new_row <- c(new_row, round(power_calc$f, 4))
           
+          #print(paste0(overall_count, ": ", paste(new_row[2:3], collapse = ", ")))
+          
           new_row <- c(new_row, overall_count)
           
           optimiser_df <- rbind(optimiser_df, new_row)
@@ -224,6 +248,8 @@ for(county_w in list(weights_county, weights_county**2, scale_values(weights_cou
 
 colnames(optimiser_df) <- c("Probability_Weights", "n", "hair_n", "min_n_cluster", "variability_cluster", "dsa_redcution_diff", "share_DSA", "treatment_distribution", "smartphone_reach", "power_rep", "simulation_No")
 
+
+print(hairdresser_IDs_consistent)
 ```
 
 
@@ -239,7 +265,7 @@ optimiser_df$power_rep <- as.numeric(optimiser_df$power_rep)
 # Order data.frame
 optimiser_df_ordered <- optimiser_df %>% 
   arrange(power_rep, variability_cluster, n, hair_n, share_DSA) %>% 
-  mutate(score = - scale_values(power_rep)*3 -  scale_values(variability_cluster)*3 - scale_values(share_DSA) - scale_values(n) -  scale_values(hair_n)*1.5) %>% 
+  mutate(score = - scale_values(power_rep)*3.5 -  scale_values(variability_cluster)*3 - scale_values(share_DSA)*1.5 - scale_values(n)*1.5 -  scale_values(hair_n)*2) %>% 
   arrange(desc(score))
 
 optimiser_df_ordered %>% 
@@ -253,6 +279,73 @@ optimiser_df_ordered %>%
 # 3. Setup new Hairdresser and Caregiver Databases
 
 ```{r}
+
+### WE ARE GOING WITH SIMULATION 912!!!!
+
+# Add two additional hairdressers from onboarding
+hairdressers_v4 <- hairdresser_ids_ls[[912]]
+
+# Are all the pilot hairdressers in the database???
+pilot_onboarding_sheet <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1YDMquh0-gaj3KaRW3nKDDDaqm6RD-mK2Ri0fWsbrrxg/edit#gid=0")
+pilot_onboarding_sheet$hairdresser_ID[!(pilot_onboarding_sheet$hairdresser_ID %in% hairdressers_v4)]
+
+# Which of the already onboarded IDs have to be added manually?
+kaj_onboarded <- c("1875L7", "7613T3", "6729E9", "1949Y3", "2505Y5", "2520P2", "3385I0", "1398W4", "3261Z0", "731D4", "6442Y3", "1301K2", "214X4", "2357B0", "236A7")
+mach_onboarded <- c("6740L3", "7853Q6", "5486I4", "4902D8", "2032K4", "5644L6", "2564W2", "1922Z8", "1437K1", "1609H3", "1836Z2", "2274C5", "6242Y5", "525R7", "6843G6")
+kia_onboarded <- c("2832I8", "2625P8", "6746B8", "3983T6", "6776K4", "5317L7", "4115Y9", "5557G7", "2470G3", "3842M9", "2593D0", "6753V3", "3058R6", "4725E3", "4427O0", "4408U8", "5086X2", "6766J0", "3549Z2", "5610Z4", "8459N2", "1895C6", "3510S9", "4447U1", "2367Q9", "3064X1", "2629Z4", "2484N4", "3906V6", "339P4", "3150E7", "2689S7", "6676Y3", "1705L6", "287U1", "5290N1", "2391T5", "5504V3", "4403I2", "5783O2", "934A3", "1356I8", "6617O8", "1792H9", "6658V6", "1742Y3", "3371J4", "3932W1", "2647C6", "895S3", "1309W0", "2148A5", "1213X2", "1558M7", "368E5", "1853S3", "3399B2")
+nbo_onboarded <- c("306Q7", "6692M5", "3609F1", "5836E5", "2926T5", "6109Z4", "6585W4", "6681T7", "2310B1", "6737W0", "6738T6", "6764N8", "1859C7", "4280F8", "985H7", "4073X0", "673V7", "1827U0", "14X8", "2342W4", "1903X2", "1008K0", "1140Z2", "1208R3", "1584J0", "1194O8", "4371F0", "5913B2", "1747L9", "2366D2", "1360U0", "2432J8", "3019Y5", "2262A6", "1801A6", "156X2", "17T6", "345G7", "6744H9", "6743P2", "7835B1", "133A3")
+all_onboarded <- c(kaj_onboarded, mach_onboarded, kia_onboarded, nbo_onboarded)
+
+# Do these IDs exist in the hairdresser database v2
+all_onboarded %in% hairdresser_database_v2$hairdresser_ID
+all_onboarded[!(all_onboarded %in% hairdresser_database_v2$hairdresser_ID)]
+
+# Add the already onboarded hairdressers on top
+to_be_added <- all_onboarded[!(all_onboarded %in% hairdressers_v4)]
+hairdressers_v4 <- c(hairdressers_v4, to_be_added)
+
+# New hairdresser Database
+hairdresser_database_v4 <- hairdresser_database_v2 %>% 
+  filter(hairdresser_ID %in% hairdressers_v4)
+
+# Which caregiver IDs have to be added on top?
+additional_caregiver_IDs <- unlist(str_split(hairdresser_database_v4[hairdresser_database_v4$hairdresser_ID %in% to_be_added,]$response_final_IDs, ", "))
+
+# New baseline database reduced
+caregivers_endline_prepped <- caregiver_ids_ls[[912]]
+caregivers_endline_prepped <- c(caregivers_endline_prepped, additional_caregiver_IDs)
+
+# CREATE NEW ENDLINE PREPPED DATABASE
+baseline_caregivers_clean_reduced <- baseline_caregivers_clean %>% 
+  filter(final_ID %in% caregivers_endline_prepped)
+
+##################################### CHECK FOR MISTAKES
+
+# Are all surveyIDs in the hairdresser database also in the cleaned baseline database? --> Should be 0
+sum(!(unlist(str_split(hairdresser_database_v4$response_final_IDs, ", ")) %in% baseline_caregivers_clean_reduced$final_ID))
+
+# Does everyone have a hairdressers in the offline? --> Should be 0
+sum(!(baseline_caregivers_clean_reduced$final_ID[baseline_caregivers_clean_reduced$cluster_treatment_group %in% c("Offline_Only", "Online_Offline")] %in% unlist(str_split(hairdresser_database_v4$response_final_IDs, ", "))))
+
+# Are the treatment reasonably equally big?
+baseline_caregivers_clean_reduced %>% group_by(cluster_treatment_group) %>% summarise(n = n())
+
+# Any empty clusters?
+baseline_caregivers_clean_reduced %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) %>% 
+  arrange(n)
+
+
+############################ EXPORT 
+
+write.csv(hairdresser_database_v4, "Data Exports/hairdresser_database_v4.csv", row.names = F)
+write.csv(baseline_caregivers_clean_reduced, "Data Exports/vcf2_rct_baseline_caregivers_clean_reduced.csv")
+
+# Location of SurveyIDs, Convert data format, Write to look at in QGIS
+hairdresser_locations <- SpatialPointsDataFrame(coords = cbind(hairdresser_database_v4$hair_lon, hairdresser_database_v4$hair_lat), data = hairdresser_database_v4, proj4string = CRS("EPSG:4326"))
+hairdresser_locations <- st_as_sf(hairdresser_locations)
+st_write(hairdresser_locations, dsn = "Data Exports/hairdresser_locations_v4.shp", append = F)
 
 ```
 

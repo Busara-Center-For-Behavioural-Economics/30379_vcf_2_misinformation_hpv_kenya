@@ -1,0 +1,1877 @@
+---
+title: "HFC_VCF"
+author: "Jonathan Karl"
+date: '2023-09-13'
+output: html_document
+---
+
+# Setup
+
+```{r}
+
+# Clean the environment
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "lubridate", "sp", "sf", "fishmethods", "WebPower", "geosphere", "RCT", "forecast", "plotly", "ltm")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+## Helper Functions
+
+```{r}
+
+tblFun <- function(x){
+  tbl <- table(x)
+  res <- cbind(tbl,round(prop.table(tbl)*100,2))
+  colnames(res) <- c('Count','Percentage')
+  res
+}
+
+tblFun_II <- function(x, y){
+  tbl <- table(x, y)
+  res <- apply(tbl, MARGIN = 2, FUN = function(x) round(prop.table(x)*100,2))
+  res
+}
+
+```
+
+## Read SurveyCTO sheet
+
+```{r}
+surveycto_choices <- read_sheet("https://docs.google.com/spreadsheets/d/1kxmMakG0JhMI8K4TU8i6dMY3PNMHVf4s3McOaA0qKJk/edit#gid=268361568", "choices")
+survey_cto_survey <- read_sheet("https://docs.google.com/spreadsheets/d/1kxmMakG0JhMI8K4TU8i6dMY3PNMHVf4s3McOaA0qKJk/edit#gid=268361568", "survey")
+```
+
+## Read Survey Data
+
+```{r}
+
+# Read data
+baseline_data <- read.csv("Raw Data/Main Data Collection/VCF2 - RCT - Recruitment + Baseline - Caregivers_WIDE.csv")
+
+# Fix the Stupid Stata ""-issue and Dates
+baseline_data[, sapply(baseline_data, class) == 'character'][baseline_data[, sapply(baseline_data, class) == 'character'] == ""] <- NA
+
+# Format dates
+baseline_data <- baseline_data %>% 
+  mutate_at(c("SubmissionDate","starttime","endtime"), as_datetime, format = "%d.%m.%Y %H:%M:%S")
+
+baseline_data$submission_week <- floor_date(baseline_data$SubmissionDate, "weeks", week_start = 1)
+baseline_data$submission_date_dateonly <- floor_date(baseline_data$SubmissionDate, "day")
+
+# Duration and Z scores
+baseline_data <- baseline_data %>% mutate(zscore_duration = (duration - mean(duration))/sd(duration))
+
+# Drop irrelevant variables
+#baseline_data <- baseline_data %>% 
+#  select(-c("devicephonenum", "id1", "id2", "id3", "id4", "id5"))
+
+# Retain only responses where the participant consented
+tblFun(baseline_data$consent)
+baseline_data <- baseline_data %>% 
+  filter(consent == 1)
+
+# Filter for FO Training
+# baseline_data <- baseline_data %>% filter(SubmissionDate >= as_datetime("2023-10-17 14:00:00") & SubmissionDate < as_datetime("2023-10-20 00:00:00"))
+
+# Filter for RCT Pilots
+#baseline_data <- baseline_data %>% filter(SubmissionDate > as_datetime("2023-10-20 00:00:00"))
+
+# Filter for Main Data Collection
+baseline_data <- baseline_data %>% filter(SubmissionDate > as_datetime("2023-10-24 00:00:00"))
+
+# Filter all cluster 271 responses before 8th November (we are moving this cluster far)
+baseline_data <- baseline_data %>% filter(!(SubmissionDate < as_datetime("2023-11-08 00:00:00") & B0_cluster == 271))
+
+# Abandon Clusters
+baseline_data <- baseline_data %>% filter(B0_cluster != 197)
+baseline_data <- baseline_data %>% filter(B0_cluster != 37)
+baseline_data <- baseline_data %>% filter(B0_cluster != 186)
+baseline_data <- baseline_data %>% filter(B0_cluster != 414)
+baseline_data <- baseline_data %>% filter(B0_cluster != 141)
+baseline_data <- baseline_data %>% filter(B0_cluster != 10)
+baseline_data <- baseline_data %>% filter(B0_cluster != 363)
+baseline_data <- baseline_data %>% filter(B0_cluster != 54)
+baseline_data <- baseline_data %>% filter(B0_cluster != 378)
+baseline_data <- baseline_data %>% filter(B0_cluster != 248)
+
+# REMOVE ONE EACH
+# Remove one response of Sahara Mohammed and Catherine Njuguna both recruited Josephine Achieng in cluster 50 in Nairobi (not on the same day)
+# Alice Mwende Muema and Emmanuel Simiyu both recruited someone with the same number in cluster 283 in Nairobi.........on the same day....but the name is different
+# Amos Osumo and Shanice Linah Adhiambo both recruited Maria Sianda in cluster 305 (nairobi). Amos on the 28th of Oct. and Shanice on the 20th of Nov.
+```
+
+## Clean the randomised questions
+
+```{r}
+
+################### Discernment
+
+# Coalesce the truth discernment columns
+for(i in 1:16){
+  baseline_data[paste0("truth_discernment_",i)] <- do.call(coalesce, baseline_data[,paste0("truth_discernment_", i, "_set",1:5)])
+}
+
+# Drop the truth discernment columns
+old_discernment_var_names <- apply(expand.grid("truth_discernment_",1:16,"_set",1:5), 1, paste0, collapse="")
+old_discernment_var_names <- str_remove_all(old_discernment_var_names, " ")
+baseline_data[old_discernment_var_names] <- NULL
+
+################### Manipulation
+
+# First ensure all the multi-select variable are character variables
+multi_select_manip_var_names <- apply(expand.grid("detect_misinfo_",1:12, "_2_set",1:5), 1, paste0, collapse="")
+multi_select_manip_var_names <- str_remove_all(multi_select_manip_var_names, " ")
+baseline_data[,multi_select_manip_var_names] <- data.frame(lapply(baseline_data[,multi_select_manip_var_names], as.character))
+
+# Coalesce the manipulation columns
+for(i in 1:12){
+  
+  # Is this manipulative?
+  baseline_data[paste0("detect_misinfo_",i,"_1")] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_1_set",1:5)])
+  
+  # Which techniques?
+  baseline_data[paste0("detect_misinfo_",i, "_2")] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_2_set",1:5)])
+  
+  # How confident?
+  baseline_data[paste0("detect_misinfo_",i, "_3")] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_3_set",1:5)])
+  
+  # Would you share?
+  baseline_data[paste0("detect_misinfo_",i, "_4")] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_4_set",1:5)])
+  
+  for(multi in c(1:6,88)){
+   
+    # Technique multiple select variable
+    baseline_data[paste0("detect_misinfo_",i,"_2_",multi)] <- do.call(coalesce, baseline_data[,paste0("detect_misinfo_", i, "_2_set",1:5, "_", multi)])
+     
+  }
+}
+
+# Drop the truth discernment columns
+old_manipulation_var_names_1 <- apply(expand.grid("detect_misinfo_",1:12, "_", 1:4, "_set",1:5), 1, paste0, collapse="")
+old_manipulation_var_names_1 <- str_remove_all(old_manipulation_var_names_1, " ")
+old_manipulation_var_names_2 <- apply(expand.grid("detect_misinfo_",1:12, "_2_set",1:5, "_", c(1:6,88)), 1, paste0, collapse="")
+old_manipulation_var_names_2 <- str_remove_all(old_manipulation_var_names_2, " ")
+old_manipulation_var_names <- c(old_manipulation_var_names_1, old_manipulation_var_names_2)
+baseline_data[old_manipulation_var_names] <- NULL
+
+```
+
+## Manually edit data
+
+### Mislabelled Clusters
+
+```{r}
+
+relabel_clusters <- function(finalids, correct_cluster){
+  
+  # What is the clusters treatment group 
+  correct_cluster_treatment_group <- unique(baseline_data$cluster_treatment_group[baseline_data$B0_cluster == correct_cluster])
+  
+  # Adjust clusterID
+  baseline_data[baseline_data$final_ID %in% finalids, ]$B0_cluster <<- correct_cluster
+  
+  if(length(correct_cluster_treatment_group) > 1){
+    print("ERROR")
+  }
+  
+  # Adjust treatment group
+  baseline_data[baseline_data$final_ID %in% finalids, ]$cluster_treatment_group <<- correct_cluster_treatment_group
+}
+
+
+
+relabel_clusters(c("98197Dec9171002", "76186Dec9123254", "77103Dec9105523", "84166Dec9134533", "13193Dec9154005", "44173Dec9144909", "20185Dec8174959", "77181Dec8164121", "38171Dec8154903", "42152Dec8133125", "44147Dec8114606", "39177Dec9113313"), 428)
+
+relabel_clusters(c("29187Nov29101906"), 128)
+
+relabel_clusters(c("63200Oct30121711", "29166Nov3090457", "69154Oct30154755"), 230)
+
+relabel_clusters(c("66183Nov8160224"), 280)
+
+relabel_clusters(c("63130Nov24165008"), 364)
+
+relabel_clusters(c("77166Dec7104701"), 103)
+
+relabel_clusters(c("102177Oct28132949", "70115Oct28164915"), 318)
+
+relabel_clusters(c("74106Dec13163729"), 318)
+
+relabel_clusters(c("20162Oct24145318"), 207)
+
+relabel_clusters(c("84165Nov23100932"), 403)
+
+relabel_clusters(c("72127Oct26150254", "89150Oct26160443"), 215)
+
+relabel_clusters(c("81161Nov16102342", "52162Nov16113233", "22111Nov16130039", "59133Nov16141055"), 239)
+
+relabel_clusters(c("28141Nov16130304", "104102Nov18143305", "63125Nov18155500", "35187Nov18165511", "27131Nov16101344", "15134Nov16170730"), 218)
+
+relabel_clusters(c("61139Nov23144905"), 282)
+
+relabel_clusters(c("67105Dec15104756", "64199Nov1141133"), 97)
+
+#c("39177Dec9113313") %in% baseline_data$final_ID
+```
+
+### Remove Fradulent Data
+
+```{r}
+table(baseline_data[baseline_data$en_name == "Ruth Wanjiru Ndungu",]$B0_cluster)
+
+baseline_data %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) %>% 
+  arrange(B0_cluster)
+```
+
+### Manually adjust FO mistakes
+
+```{r}
+
+# 20th Nov, Shanice Linah accidentally keyed in Kiambu as a location instead of Nairobi to the respondent named Lucy Nyamoita
+baseline_data[baseline_data$final_ID %in% c("24170Nov20092513"), ]$county_name <- "Nairobi"
+baseline_data[baseline_data$final_ID %in% c("24170Nov20092513"), ]$county_name_fo_location <- "Nairobi"
+
+```
+
+
+# ------ Caregivers ------ 
+
+# 1. Base Checks
+
+## 1.1 Did everyone use the correct latest version of the survey?
+
+```{r}
+
+tblFun(baseline_data$formdef_version) 
+# For the Training Simulation the correct version was 2310171533
+# For the main data collection, the minimum acceptable version was 2310231825
+# From the 28th October, respondents should use 2310271446
+
+# Who used the wrong survey?
+baseline_data %>% 
+  group_by(en_name, formdef_version) %>% 
+  filter(submission_date_dateonly > as_date("2023-11-25")) %>%
+  summarise(n()) %>% 
+  arrange(en_name)
+
+# From the 16th onwards everyone has to use the version 2311151046
+# From the 17th onwards everyone has to use the version 2311161331
+# From the 25th onwards everyone has to use the version 2311251219
+
+# Filter out wrong versions
+baseline_data <- baseline_data %>% 
+  filter(formdef_version >= 2310231825)
+
+```
+
+## 1.2  Do participants match the recruitment criteria? 
+
+Look at those who answered the first question in the baseline and check if they are actually eligible. If they are not, there is an error in the survey.
+
+**Recruitment Criteria:**
+1. Male or female participants aged 18 years and over
+2. Is the primary caregiver to a daughter between the ages of 10 and 14.
+3. Must have lived in the area for over one (1) year.
+4. Owns their own private smartphone.
+5. Has and uses a Facebook account.
+6. Is willing and able to participate in the survey.
+7. Willing to provide contact information on their hairdresser
+8. Is not a hairdresser
+9. Doesn't live in the same household with a hairdresser
+
+```{r}
+
+eligible <- baseline_data$B3_age != 1 & # Age
+  apply(baseline_data[,paste0("between_10_14_",1:max(baseline_data$B6_childnu_count, na.rm = T))] > 0, MARGIN = 1, FUN = function(i) any(i)) & # Female daughter between 10 - 14
+  baseline_data$B5_long == 2 & # lived there longer than 1 year
+  baseline_data$B7_smartphone == 1 & # Owns smartphone
+  baseline_data$B7_shared == 2 & # owns it privately
+  baseline_data$B8_socialmedia == 1 & # uses social media
+  baseline_data$B8a_whichone_1 == 1 & # uses Facebook
+  #### OCCUPATION & LIVING WITH HAIRDRESSER
+  baseline_data$consent_hairdresser == 1 & # consent to share contact of hairdresser
+  baseline_data$B16_hairdresser_confidence_check == 1 # Are we confident we can recruit this hairdresser?
+
+eligible[is.na(eligible)] <- FALSE # Fix NAs
+
+# Ineligibility rate
+tblFun(eligible)
+
+# Did anyone respond to the first baseline survey question that was not eligible? --? SHOULD BE FALSE
+any(!is.na(baseline_data$income_month) & !eligible)
+
+
+```
+
+### 1.2.1 Manually check findability of hairdressers
+
+```{r}
+# What kind of hairdresser do people have?
+tblFun(baseline_data[eligible,]$B10_typehairdresser)
+
+
+############## If no phone number provided for the hairdresser, check the directions (manually) - to ensure we can actually find the hairdresser, If “mobile” mentioned in directions check if there is a phone number
+baseline_data$no_number_but_mobile <- NA
+no_number_but_mobile <- str_extract(tolower(baseline_data[eligible,]$B14_hairdresserlocation[baseline_data[eligible,]$B11_phonenumber_check == 0]), "mobile")
+baseline_data[eligible,][baseline_data[eligible,]$B11_phonenumber_check == 0,]$no_number_but_mobile <- no_number_but_mobile
+
+# Check this by FO
+baseline_data %>% 
+  group_by(en_name, submission_date_dateonly) %>% 
+  filter(submission_date_dateonly > as_date("2023-11-23")) %>%
+  filter(!is.na(no_number_but_mobile)) %>% 
+  summarise(no_number_but_mobile = n()) %>% 
+  arrange(desc(no_number_but_mobile))
+
+
+############## Any directions judged as insufficient if there is no phone number?
+no_phone_number_direction_manual_check <- baseline_data[eligible,]$B14_hairdresserlocation[baseline_data[eligible,]$B11_phonenumber_check == 0]
+
+baseline_data$insufficient_info_hairdresser <- NA
+insufficient_info_hairdresser_idx <- rep(NA, length(no_phone_number_direction_manual_check))
+which_idx_are_insufficient <- c(6,9, 18, 133, 135, 220, 222, 365, 395, 450, 456, 457, 579, 591)
+insufficient_info_hairdresser_idx[which_idx_are_insufficient] <- "insufficient"
+
+baseline_data[eligible,][baseline_data[eligible,]$B11_phonenumber_check == 0,]$insufficient_info_hairdresser <- insufficient_info_hairdresser_idx
+
+# Check this by FO
+baseline_data %>% 
+  group_by(en_name, submission_date_dateonly) %>% 
+  filter(!is.na(insufficient_info_hairdresser)) %>% 
+  summarise(insufficient_info_hairdresser = n()) %>% 
+  arrange(desc(insufficient_info_hairdresser))
+
+
+############ Automate this process for SFOs to check
+flagged_JSK <- ifelse(no_number_but_mobile == "mobile" | insufficient_info_hairdresser_idx == "insufficient", "Red Flag", "Not Flagged")
+
+sfo_manual_hairdresser_direction_check <- baseline_data %>% 
+  filter(eligible & B11_phonenumber_check == 0) %>% 
+  dplyr::select(final_ID, en_name, B0_cluster, B7_phonenumber, B1_name, B13_hairdressername, B14_hairdresserlocation) %>% 
+  add_column(flagged_JSK)
+
+
+############################ Upload new response
+
+hairdresser_redflag_tracker <- read_sheet("https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0")
+
+additional_rows <- sfo_manual_hairdresser_direction_check %>% 
+  filter(!(final_ID %in% hairdresser_redflag_tracker$final_ID))
+
+range_write(additional_rows, 
+            ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0",
+            sheet = "Enough Info to Recruit?",
+            range = paste0("A",nrow(hairdresser_redflag_tracker)+2),
+            col_names = F,
+            reformat = F)
+
+# Who messed up?
+baseline_data %>% 
+  filter(eligible & B11_phonenumber_check == 0) %>% 
+  add_column(flagged_JSK) %>% 
+  filter(flagged_JSK == "Red Flag") %>% 
+  filter(submission_date_dateonly >= "2023-11-23") %>% 
+  group_by(en_name, submission_date_dateonly) %>% 
+  summarise(n = n()) %>% 
+  arrange(desc(n))
+
+```
+### 1.2.1.1 Update new Hairdresser Information
+
+```{r}
+
+# Read sheet with updated information
+hairdresser_additional_info <- read_sheet("https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=0", sheet = "Enough Info to Recruit?")
+
+# Which columns are to be updated
+update_columns <- c("Hairdresser Phone Number", "More detailed Name", "More detailed Nickname", "More detailed Directions")
+
+# Which rows contain additional information
+additional_info_idx <- rowSums(is.na(hairdresser_additional_info[,update_columns])) != ncol(hairdresser_additional_info[,update_columns])
+
+# Update the information
+for(i in hairdresser_additional_info[additional_info_idx,]$final_ID){
+  
+  # Update Phone Number
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`Hairdresser Phone Number`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B11a_phonenumber <- hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`Hairdresser Phone Number`
+    
+  } else {
+    next
+  }
+  
+  # Update Name
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Name`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B13_hairdressername <- paste(baseline_data[baseline_data$final_ID == i,]$B13_hairdressername,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Name`)
+    
+  } else {
+    next
+  }
+  
+  # Update Nickname
+  if(!is.na(hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Nickname`)){
+    
+    baseline_data[baseline_data$final_ID == i,]$B13_hairdresser_nickname <- paste(baseline_data[baseline_data$final_ID == i,]$B13_hairdresser_nickname,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Nickname`)
+    
+  } else {
+    next
+  }
+  
+  # Update Location
+  baseline_data[baseline_data$final_ID == i,]$B14_hairdresserlocation <- paste(baseline_data[baseline_data$final_ID == i,]$B14_hairdresserlocation,
+        "-------------------- Additional Information:",
+        hairdresser_additional_info[hairdresser_additional_info$final_ID == i,]$`More detailed Directions`)
+  
+}
+
+
+unlist(str_extract_all(baseline_data$B11a_phonenumber, "NA -------------------- Additional Information: [0-9]*"))
+
+```
+
+
+### 1.2.2 Filter for eligibles
+
+```{r}
+
+# Filter
+baseline_data <- baseline_data[eligible,] 
+
+```
+
+
+## 1.3 Does each completed survey have a unique surveyID?
+
+```{r}
+
+# Should be 0 - anything above 0 indicates there is a surveyID missing
+sum(is.na(baseline_data$final_ID))
+
+# Should be 0 - anything above 0 means there is a duplicate surveyID
+sum(duplicated(baseline_data$final_ID))
+
+# Delete buggy duplicate responses (delete the first)
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "15174Oct28132521")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "97180Oct30171347")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "66112Oct26162143")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "90113Oct24161649")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "93125Oct24142732")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "93118Oct24130037")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "96160Oct24111451")[1],]
+baseline_data <- baseline_data[-which(baseline_data$final_ID == "71172Nov13134137")[1],]
+
+# Should be 0 - anything above 0 means there is a duplicate surveyID
+sum(duplicated(baseline_data$final_ID))
+
+
+```
+
+# CLEANED DATA FROM HERE ON
+
+```{r}
+# Export cleaned Data
+write.csv(baseline_data, "Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+```
+
+
+
+## 1.4 Are there any programming bugs (e.g., response scale recorded incorrectly, skip logic flaws, all NAs, etc.)?
+
+```{r}
+
+# Questions with all NA?
+var_logic_all_na <- apply(baseline_data, MARGIN = 2, FUN = function(x){sum(is.na(x)) == length(x)})
+var_all_na <- names(var_logic_all_na[var_logic_all_na])
+var_all_na
+
+# remove clutter
+rm(var_logic_all_na, var_all_na)
+
+```
+
+## 1.5 Use of Specify other too much?
+
+```{r}
+# Extract specify other vars
+specify_other_vars <- colnames(baseline_data)[which(str_extract_all(colnames(baseline_data), "specify") == "specify")]
+
+# This will be a lot. Check all the specify others variables and examine if you maybe missed some options for answers
+# Also subset for the columns that are actually in the survey: Keep in mind, in this phase the survey might still change.--> i.e. this prints all responses given to the "Specify Other" variables
+as.list(baseline_data[,specify_other_vars[specify_other_vars  %in% colnames(baseline_data)]]) %>% lapply(function(x) x[!is.na(x)])
+
+# remove clutter
+rm(specify_other_vars)
+```
+
+## 1.6 Descriptive Stats
+
+### 1.6.1 Breakdown of Demographics (check for imbalances)
+
+Key Demographics:
+
+1. B2_gender
+2. B3_age
+3. B4_countylive
+4. B10_work
+5. B5_members
+6. B6a_number
+7. B8a_whichone
+8. income_month
+9. relationship_status
+10. religion > christianity_denomination
+11. B15_hairdresserfreq
+
+```{r}
+
+# What are the key demographics?
+key_demographics <- c("B2_gender", "B3_age", "B4_countylive", "B10_work", "B5_members", "B6a_number", "income_month", "relationship_status", "religion", "christianity_denomination", "B15_hairdresserfreq", paste0("B8a_whichone_",1:6))
+
+# Create temp dataset to label (i.e. change the data)
+temp_data <- baseline_data[,key_demographics]
+
+# Label the values properly
+choice_sets <- str_remove_all(survey_cto_survey[survey_cto_survey$name %in% key_demographics,]$type, "select_one ")
+corresponding_vars <- survey_cto_survey[survey_cto_survey$name %in% key_demographics,]$name
+choices_key_demographics <- surveycto_choices[surveycto_choices$list_name %in% choice_sets,]
+
+for(i in 1:length(choice_sets)){
+  
+  if(choice_sets[i] == "integer"){
+    next
+  }
+  
+  # Extract choice set for specific demographic
+  choices_demographic_x <- choices_key_demographics[choices_key_demographics$list_name == choice_sets[i],]
+  
+  # Create mapping vector
+  map <- unlist(choices_demographic_x$label)
+  names(map) <- choices_demographic_x$value
+  
+  # Re-Label for the corresponding variable
+  temp_data[,corresponding_vars[i]] <- unname(map[temp_data[,corresponding_vars[i]]])
+  
+}
+
+# Adjust the variable names for the social media networks 
+map <- c("1"	= "Facebook", "2"	= "Whatsapp", "3"	= "Instagram", "4"	= "TikTok", "5"	= "Twitter", "6" = "YouTube")
+colnames(temp_data)[which(colnames(temp_data) %in% paste0("B8a_whichone_",1:6))] <- paste0("B8a_whichone_",map)
+
+# Change variable names to questions asked
+colnames(temp_data)[1:(length(key_demographics)-6)] <- survey_cto_survey$label[match(colnames(temp_data)[1:(length(key_demographics)-6)], survey_cto_survey$name)]
+
+# Compute Summary Stats for the key demographics
+lapply(temp_data, tblFun)
+
+# Compute Summary Stats by Treatment Group
+lapply(temp_data, tblFun_II, baseline_data$cluster_treatment_group)
+
+temp_data_demographics <- temp_data
+
+```
+
+### 1.6.2 Key variables
+
+#### 1.6.2.1 Truth Discernment
+
+```{r}
+
+truth_actuals <- c(truth_discernment_1 = "Girls vaccinated against HPV will not get their menstrual cycles during their liftime.", 
+                   truth_discernment_2 = "The HPV vaccine exposes your child to cancer.",
+                   truth_discernment_3 =	"If adolescent girls take the vaccine, they will not be able to have children",
+                   truth_discernment_4 =	"HPV vaccine is part of a program run by the government to reduce the population.",
+                   truth_discernment_5 = "Certain types of HPV can cause genital warts and cervical and penile cancer.",
+                   truth_discernment_6 =	"9 women die in Kenya every day due to cervical cancer",
+                   truth_discernment_7 = "There exists plenty of scientfic evidence that the HPV vaccine is safe and effective, protecting against cervical cancer.",
+                   truth_discernment_8 =	"The HPV vaccine does not cause infertility",
+                   truth_discernment_9 = "Wearing masks, maintaining social distance and washing your hands is not effective and does not protect against COVID-19.",
+                   truth_discernment_10 = "Secondary education in Kenya lasts for 7 years.",
+                   truth_discernment_11 = "The eye scan by Worldcoin is linked to the Illumati.",
+                   truth_discernment_12 = "Ovens cause cancer by converting the nutrients of food into dangerous and harmful particles.",
+                   truth_discernment_13 = "The leading cause of death in Africa are lung infections, diarrhoeal diseases, HIV/Aids, malaria and tuberculosis.",
+                   truth_discernment_14 = "Safaricom is the largest telecommunications provider in Kenya.",
+                   truth_discernment_15 = "Nairobi is home to the largest slum in Africa.",
+                   truth_discernment_16 = "Kenya is a member of the East African Community.")
+
+
+# Create temp dataset to label (i.e. change the data)
+truth_discernment_vars <- paste0("truth_discernment_",1:16)
+temp_data <- baseline_data[,truth_discernment_vars]
+
+# Check each variable
+truth_discernment_descriptive <- lapply(temp_data, tblFun)
+names(truth_discernment_descriptive) <- paste0(names(truth_actuals), ": ", truth_actuals)
+truth_discernment_descriptive
+
+# Check by Treatment Group
+truth_discernment_descriptive <- lapply(temp_data, tblFun_II, baseline_data$cluster_treatment_group)
+names(truth_discernment_descriptive) <- paste0(names(truth_actuals), ": ", truth_actuals)
+truth_discernment_descriptive
+
+```
+
+#### 1.6.2.2 Source Credibility
+
+```{r}
+
+source_credibility <- c(source_cred_1	= "The Daily Nation", source_cred_2	= "Other Caregivers", source_cred_3	= "Akothee", source_cred_4	= "Your Hairdresser", source_cred_5	= "Doctors", source_cred_6	= "Ministry of Health (MOH)")
+
+# Create temp dataset to label (i.e. change the data)
+source_credibility_vars <- paste0("source_cred_",1:6)
+temp_data <- baseline_data[,source_credibility_vars]
+
+# Check each variable
+descriptive <- lapply(temp_data, hist)
+names(descriptive) <- paste0(names(source_credibility), ": ", source_credibility)
+
+# Check by Treatment Group
+descriptive_by_group <- lapply(temp_data, tblFun_II, baseline_data$cluster_treatment_group)
+names(descriptive_by_group) <- paste0(names(source_credibility), ": ", source_credibility)
+descriptive_by_group
+```
+
+
+#### 1.6.2.3 Manipulation
+
+```{r}
+
+# Manipulativeness
+manipulativeness <- c("Manipulative", 
+                      "Manipulative", 
+                      "Manipulative", 
+                      "Manipulative", 
+                      "Non-Manipulative", 
+                      "Manipulative", 
+                      "Non-Manipulative", 
+                      "Non-Manipulative", 
+                      "Manipulative", 
+                      "Non-Manipulative", 
+                      "Non-Manipulative", 
+                      "Manipulative")
+temp_data <- baseline_data[paste0("detect_misinfo_",1:12,"_1")]
+manipulative_descriptive <- lapply(temp_data, tblFun)
+names(manipulative_descriptive) <- paste(names(manipulative_descriptive), manipulativeness)
+manipulative_descriptive
+
+# By Treatment Group
+manipulative_descriptive <- lapply(temp_data, tblFun_II, baseline_data$cluster_treatment_group)
+names(manipulative_descriptive) <- paste(names(manipulative_descriptive), manipulativeness)
+manipulative_descriptive
+
+# Techniques
+techniques <- c("Conspiracy theory (5), Emotional language use (2)", 
+  "Emotional language use (2), Conspiracy theory (5)",
+  "Fake account (4), Emotional Language use (2), Conspiracy theories (5)", 
+  "Trolling (6)",
+  "Non-Manipulative",
+  "Fake account (4), Emotional Language Use (2), Conspiracy Theory (5), Discrediting Opponents (1)",
+  "Non-Manipulative",
+  "Non-Manipulative",
+  "Intergroup Polarisation (3), Fake Account (4), Emotional Language Use (2)",
+  "Non-Manipulative",
+  "Non-Manipulative",
+  "Discreding Opponents (1)")
+temp_data <- baseline_data[paste0("detect_misinfo_",1:12,"_2")]
+techniques_descriptive <- lapply(temp_data, tblFun)
+names(techniques_descriptive) <- paste(names(techniques_descriptive), techniques)
+techniques_descriptive
+
+```
+
+#### 1.6.2.4 Ethical Practice
+
+```{r}
+
+ethical_practices_qs <- c("I felt that BUSARA staff were approachable when I had questions or concerns.",
+                          "I would recommend to others that they consider participation in a research study at BUSARA.",
+                          "If I was aware of another research study at BUSARA for which I was eligible and I had time to participate, I would participate.",
+                          "I feel I have gained/learned something from participating in this research study today.",
+                          "How positive or negative was your experience in the session/study today?")
+
+temp_data <- baseline_data[,paste0("ethical_prac_",1:5)]
+ethical_descriptive <- lapply(temp_data, tblFun)
+names(ethical_descriptive) <- paste(names(ethical_descriptive), ethical_practices_qs)
+ethical_descriptive
+
+
+# Cronbach Alpha
+cronbach.alpha(temp_data)
+
+# Without the 99s
+temp_data_no99 <- temp_data
+temp_data_no99[temp_data_no99 == 99] <- NA
+cronbach.alpha(temp_data_no99, na.rm = T)
+
+
+# Summary stats
+dont_know <- apply(baseline_data, FUN = function(x) mean(x %in% 88), MARGIN = 1)
+refuse_answer <- apply(baseline_data, FUN = function(x) mean(x %in% 99), MARGIN = 1)
+
+temp_data_no99$dont_know <- dont_know
+temp_data_no99$refuse_answer <- refuse_answer
+temp_data_no99$mean_ethical <- apply(temp_data_no99[,paste0("ethical_prac_",1:5)], FUN = mean, MARGIN = 1, na.rm = T)
+
+cor.test(temp_data_no99$dont_know, temp_data_no99$mean_ethical)
+cor.test(temp_data_no99$refuse_answer, temp_data_no99$mean_ethical)
+
+ggplot(temp_data_no99) +
+  geom_point(aes(x = dont_know, y = mean_ethical), color = "red", alpha = 0.1) +
+  geom_smooth(aes(x = dont_know, y = mean_ethical), 
+              method = lm, 
+              color = "red") + 
+  theme_minimal()
+
+ggplot(temp_data_no99) +
+  geom_point(aes(x = refuse_answer, y = mean_ethical), color = "blue", alpha = 0.1) + 
+    geom_smooth(method = lm, 
+              aes(x = refuse_answer, y = mean_ethical),
+              color = "blue") + 
+  theme_minimal()
+  
+
+# Logistic
+m <- glm(refuse_answer ~ mean_ethical, family = binomial, data = temp_data_no99)
+summary(m)
+exp(coef(m))
+
+print("__________________________________________________________________________________")
+
+m <- glm(dont_know ~ mean_ethical, family = binomial, data = temp_data_no99)
+summary(m)
+exp(coef(m))
+
+```
+
+
+### 1.6.3 Balance Check
+
+```{r}
+
+
+# Checking Balance using Summary Statistics
+check_balance <- function(data, treatment_var, vars){
+  for (var in vars){
+    print(paste("Checking balance for:", var))
+    
+    data[data == 77] <- NA
+    data[data == 88] <- NA
+    data[data == 99] <- NA
+    
+    # Check variable type
+    if (is.numeric(data[[var]])){
+      # T-test
+      anova_result <- TukeyHSD(aov(data[[var]] ~ data[[treatment_var]]))
+      print(anova_result[1])
+    } else if (is.factor(data[[var]]) || is.character(data[[var]])) {
+      # Chi-squared test for categorical variables
+      contingency_table <- table(data[[treatment_var]], data[[var]])
+      chi_sq_test <- chisq.test(contingency_table)
+      print(paste("Chi-squared test p-value:", chi_sq_test$p.value))
+    }
+  }
+}
+
+# Specify variables to check
+demographic_variables_to_check <- key_demographics
+manipulation_vars_to_check <- paste0("detect_misinfo_",1:12,"_1")
+truth_discernment_var_to_check <- paste0("truth_discernment_",1:16)
+
+# Using the function
+check_balance(baseline_data, 'cluster_treatment_group', demographic_variables_to_check)
+check_balance(baseline_data, 'cluster_treatment_group', manipulation_vars_to_check)
+check_balance(baseline_data, 'cluster_treatment_group', truth_discernment_var_to_check)
+
+```
+
+
+## 1.7 Randomisation Check
+
+```{r}
+
+ggplot(baseline_data) + geom_bar(aes(x = cluster_treatment_group), fill = "#0033A1")
+
+```
+
+## 1.8 High rates of missing data (e.g., Don't Know, Refuse to Respond) for key variables?
+
+```{r}
+
+# Compute share of Don't Knows per variables
+head(sort(apply(baseline_data, FUN = function(x) mean(x %in% 88), MARGIN = 2), decreasing = T), 10)
+
+# Compute share of Refused to Answer 
+head(sort(apply(baseline_data, FUN = function(x) mean(x %in% 99), MARGIN = 2), decreasing = T), 10)
+
+```
+
+## 1.9 ICC-check and Power-check
+
+```{r}
+
+#icc <- clus.rho(popchar = baseline_data$truth_discernment_1, cluster = baseline_data$B0_cluster)
+(icc_1 <- clus.rho(popchar = baseline_data$detect_misinfo_1_1[baseline_data$detect_misinfo_1_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$detect_misinfo_1_1 != 88]))
+
+(icc_2 <- clus.rho(popchar = baseline_data$truth_discernment_1[baseline_data$truth_discernment_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$truth_discernment_1 != 88]))
+
+(icc_3 <- clus.rho(popchar = baseline_data$vax_beh_int_1_1[baseline_data$vax_beh_int_1_1 != 88], cluster = baseline_data$B0_cluster[baseline_data$vax_beh_int_1_1 != 88]))
+
+# Predicted
+wp.crt2arm(n = 60/2, J = 108/2, icc = ifelse(icc_1$icc[1] < 0,0,icc_1$icc[1]), alpha = 0.05, power = 0.8)
+
+# Actual
+temp_df <- baseline_data %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n())
+
+temp_df <- temp_df %>% 
+  filter(n > 30)
+sd(temp_df$n)/mean(temp_df$n)
+
+temp_df <- baseline_data %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) %>% 
+  mutate(mean_n = mean(n))
+
+wp.crt2arm(n = round(mean(temp_df$n)/2),
+           J = round(length(unique(temp_df$B0_cluster))/2),
+           icc = ifelse(icc_1$icc[1] < 0,0,icc_1$icc[1]), 
+           alpha = 0.05, 
+           power = 0.8)
+
+wp.crt2arm(n = round(mean(temp_df$n)/2),
+           J = round(length(unique(temp_df$B0_cluster))/2),
+           icc = ifelse(icc_3$icc[1] < 0,0,icc_3$icc[1]), 
+           alpha = 0.05, 
+           power = 0.8)
+
+```
+
+ 
+# 2. Duplicates & Fraud
+
+## 2.1 Are we confident that each completed survey corresponds to a unique participant? If so, are all survey ID and phone number pairings unique?
+
+```{r}
+
+# Exact duplicate rows? SHOULD BE TRUE
+sum(duplicated(baseline_data)) == 0
+
+# Duplicate (looking at Name, Phone Number)
+# Name
+duplicate_names <- baseline_data$B1_name[duplicated(tolower(baseline_data[,c("B1_name")]))]
+temp_df <- baseline_data[baseline_data$B1_name %in% duplicate_names,c("starttime", "en_name", "B1_name", "B0_cluster", "county_name", "B7_phonenumber")] %>% 
+  arrange(B1_name, en_name)
+temp_df
+
+
+# Phone Number
+baseline_data[duplicated(baseline_data[,c("B7_phonenumber")]),c("B1_name", "B7_phonenumber")]
+duplicate_phonenumber <- baseline_data$B7_phonenumber[duplicated(baseline_data[,c("B7_phonenumber")])]
+temp_df <- baseline_data[baseline_data$B7_phonenumber %in% duplicate_phonenumber,c("starttime", "en_name", "B1_name", "B0_cluster", "county_name", "B7_phonenumber", "final_ID")] %>% 
+  arrange(B7_phonenumber)
+temp_df
+
+```
+
+## 2.2 Arbitrary responses?
+
+```{r}
+
+# Separate groups of questions answered by scales
+manipulativeness_assessment <- paste0("detect_misinfo_", 1:12,"_1")
+truth_discernment <- c("truth_discernment_1","truth_discernment_2","truth_discernment_3","truth_discernment_4","truth_discernment_5","truth_discernment_6","truth_discernment_7","truth_discernment_8","truth_discernment_9","truth_discernment_10","truth_discernment_11","truth_discernment_12","truth_discernment_13","truth_discernment_14","truth_discernment_15","truth_discernment_16")
+source_cred <- c("source_cred_1", "source_cred_2", "source_cred_3", "source_cred_4", "source_cred_5", "source_cred_6")
+vax_hes <- c("vax_hes_2", "vax_hes_3", "vax_hes_4", "vax_hes_5", "vax_hes_6", "vax_hes_7", "vax_hes_8", "vax_hes_9")
+vax_beh_int <- c("vax_beh_int_2", "vax_beh_int_3", "vax_beh_int_4", "vax_beh_int_6")
+
+# Combine into list of variable groups
+q_groups <- list(manipulativeness_assessment = manipulativeness_assessment,
+                 truth_discernment = truth_discernment,
+                 source_cred = source_cred, 
+                 vax_hes = vax_hes, 
+                 vax_beh_int = vax_beh_int)
+
+######################## Share of respondents per question group that said the same thing for each question
+
+q_groups_copy <- q_groups
+for(i in 1:length(q_groups_copy)){
+  q_groups_copy[[i]] <- round(mean(apply(baseline_data[,q_groups_copy[[i]]], MARGIN = 1, FUN = function(x) length(unique(x)) == 1)), digits = 3)
+}
+
+likert_understanding_df <- data.frame(share_only_1_response = t(data.frame(q_groups_copy))) %>% arrange(desc(share_only_1_response)) 
+likert_understanding_df$question_group <- rownames(likert_understanding_df)
+likert_understanding_df$question_group <- factor(likert_understanding_df$question_group, levels = likert_understanding_df$question_group[order(likert_understanding_df$share_only_1_response, decreasing = TRUE)])
+
+# Print output
+likert_understanding_df %>% 
+  ggplot() + 
+  geom_bar(aes(x = share_only_1_response, y = question_group), stat = "identity", fill = "#0033A1") +
+  geom_label(aes(x = share_only_1_response, y = question_group, label = paste0(round(share_only_1_response*100),"%")), nudge_x = 0.05) +
+  scale_x_continuous(limits = c(0,1), labels = c("0%", "25%", "50%", "75%", "100%")) +
+  xlab("Share of Respondents who only\n gave a single response\n to all questions") + ylab("Question Group") +
+  theme_minimal()
+
+
+############################ Per respondent show the share of groups where the respondent said the same thing for every question
+
+# Create dataframe that capture the amount of distinct responses per group per participant
+distinct_q_groups <- lapply(q_groups, function(i) apply(baseline_data[,i], MARGIN = 1, FUN = n_distinct, na.rm = T))
+distinct_q_groups_df <- data.frame(do.call(cbind, distinct_q_groups))
+
+#Show the share of groups per respondent where the same response was given for each question in a question group
+share_groups_by_respondent_only_1_response <- apply(distinct_q_groups_df, MARGIN = 1, FUN = function(i) mean(i == 1))
+hist(share_groups_by_respondent_only_1_response, main = "Share of Groups per Respondents\nwithout variation", xlab = "Share of Groups", col = "#0033a1")
+
+# Show the groups in which this took place
+which_groups_by_respondent_only_1_response <- apply(distinct_q_groups_df, MARGIN = 1, FUN = function(i) colnames(distinct_q_groups_df)[i == 1])
+
+# Print a dataframe showing each respondent (name, email), the number of groups (and share they answered with only one response) and the groups as a combined string
+arbitrary_responses_df <- data.frame(B1_name = baseline_data$B1_name, 
+                                     final_ID = baseline_data$final_ID,
+                                     endtime = baseline_data$endtime,
+                                     en_name = baseline_data$en_name, 
+                                     B0_cluster = baseline_data$B0_cluster,
+                                     county_name = baseline_data$county_name,
+                                     groups_single_resp = sapply(which_groups_by_respondent_only_1_response, paste, collapse = ", "), 
+                                     number_groups_single_resp = sapply(which_groups_by_respondent_only_1_response, length), 
+                                     share_groups_single_resp = share_groups_by_respondent_only_1_response) %>%
+  arrange(desc(share_groups_single_resp))
+
+arbitrary_responses_df$groups_single_resp[arbitrary_responses_df$groups_single_resp == ""] <- "No_Single_Resp_Group"
+
+# Who messed up?
+temp_df <- arbitrary_responses_df %>% 
+  arrange(en_name, desc(share_groups_single_resp))
+temp_df
+
+# remove clutter
+#rm(distinct_q_groups, distinct_q_groups_df, which_groups_by_respondent_only_1_response, share_groups_by_respondent_only_1_response, likert_understanding_df, q_groups, q_groups_copy, i)
+
+```
+
+
+## 2.4 Is there evidence of fake data? (how long did surveys take)
+
+```{r}
+
+# Show the time histogram to get a feel for how long people need
+hist(baseline_data$duration/60) # In Minutes
+
+# Someone took Xh, let's exclude him to see the general pattern better
+#hist(baseline_data$duration[baseline_data$duration/60 < X]/60, main = "Duration (filtered by <Xh)")
+baseline_data %>% group_by(en_name) %>% summarise(duration = mean(duration/60)) %>% arrange(duration)
+
+
+# Investigate the histogram of z scores.
+hist(baseline_data$zscore_duration)
+# Show the observations that are more than 2 standard deviations below the mean duration (very short responses, indicating they just ticked through)
+time_outliers_df <- baseline_data[baseline_data$zscore_duration < -2,]
+
+# remove clutter
+#rm(time_outliers_df)
+```
+
+## 2.5 Wrong locations?
+
+```{r}
+
+# Location of SurveyIDs
+survey_locations <- SpatialPointsDataFrame(coords = cbind(baseline_data$geopoint_recruitment.Longitude, baseline_data$geopoint_recruitment.Latitude), data = baseline_data[,c("B0_cluster", "en_name", "county_name", "geopoint_recruitment.Accuracy", "final_ID", "endtime", "submission_date_dateonly", "cluster_treatment_group")], proj4string = CRS("EPSG:4326"))
+
+# Convert data format
+survey_locations <- st_as_sf(survey_locations)
+
+# Read locations of clusters and find survey locations that were outside of the clusters
+vcf_rct_clusters <- st_read("Sampling/clusters/randomly_selected_clusters_buffered_allocated_to_groups_v6.shp")
+
+# Compute minimum distance between polygon and points to see if either points are within polygons or which ones they are closest to.
+point_in_polygon <- st_distance(vcf_rct_clusters, survey_locations)
+cluster_min_dist_in_meters <- apply(point_in_polygon, MARGIN = 2, FUN = min)
+
+# Find the closest cluster or the cluster in which the response was logged
+point_in_cluster_min_idx <- apply(point_in_polygon, MARGIN = 2, FUN = which.min)
+in_which_close_to_which <- vcf_rct_clusters$cluster_id[point_in_cluster_min_idx]
+
+# Add to survey_locations object
+survey_locations <- survey_locations %>% 
+  mutate(cluster_min_dist_in_meters = cluster_min_dist_in_meters) %>% 
+  add_column(in_which_close_to_which = in_which_close_to_which, .after = 1) %>% 
+  mutate(within_cluster = ifelse(cluster_min_dist_in_meters == 0, T, F))
+
+# Write to look at in QGIS
+st_write(survey_locations, dsn = "Data Exports/survey_locations_baseline.shp", append = F)
+
+
+########### To actually look at
+
+# Which survey submissions were not in the cluster
+survey_locations %>% 
+  filter(within_cluster == FALSE) %>% 
+  #filter(submission_date_dateonly >= "2023-10-30") %>% 
+  group_by(en_name) %>% 
+  summarise(sum_outside = sum(!within_cluster), mean_distance = mean(cluster_min_dist_in_meters), mean_accuracy_gps = mean(geopoint_recruitment.Accuracy)) %>% # Might this be due to the poor accuracy of the GPS
+  arrange(desc(sum_outside))
+
+# Which clusters were mislabelled 
+survey_locations %>% 
+  filter(B0_cluster != in_which_close_to_which) %>% 
+  group_by(en_name) %>% 
+  mutate(n = n(), .before = "B0_cluster")
+
+
+```
+
+## 2.6 Audio Audit / Backcheck - Pipeline
+
+```{r}
+
+################### which responses don't have audio audit?
+baseline_data %>% 
+  filter(is.na(audio)) %>% 
+  group_by(en_name, county_name, submission_date_dateonly) %>% 
+  summarise(number_no_audio = n()) %>% 
+  arrange(county_name, desc(number_no_audio))
+
+
+################### Audit those where the survey was an outlier on duration
+temp_df1 <- baseline_data %>% 
+  filter(zscore_duration < -2) %>% 
+  mutate(duration_mins = duration/60) %>% 
+  mutate(SubmissionDate = as.character(SubmissionDate)) %>% 
+  dplyr::select(final_ID, SubmissionDate, duration, en_name, county_name_fo_location, B0_cluster, B1_name, audio)
+
+#range_write(temp_df1, 
+#            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+#            sheet = "Duration_Outliers",
+#            range = "A1",
+#            reformat = F)
+
+#################### Audit 25 additional surveys per week
+
+# Find out the last date that was uploaded and then filter for dates larger than that.
+regular_audits_so_far <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+           sheet = "Regular_Audio_Audits")
+
+set.seed(42)
+temp_df2 <- baseline_data %>%
+  filter(!is.na(audio)) %>% 
+  filter(submission_date_dateonly > max(as_date(regular_audits_so_far$SubmissionDate) + day(1))) %>% 
+  group_by(submission_date_dateonly) %>% 
+  mutate(submission_date_dateonly = as.character(submission_date_dateonly)) %>%
+  mutate(duration_mins = round(duration/60)) %>% 
+  slice_sample(n = 3) %>% 
+  dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, audio) %>% 
+  filter(!(final_ID %in% temp_df1$final_ID))
+
+#range_write(temp_df2, 
+#            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+#            sheet = "Regular_Audio_Audits",
+#            range = paste0("A",nrow(regular_audits_so_far)+2),
+#            reformat = F,
+#            col_names = F)
+
+############ Add manual Audio Audits
+
+# The densely clustered responses in cluster 207
+ids_cluster207_dense <- c("35169Oct24130746", "96100Oct24105643", "21188Oct24132944", "86135Oct24161636")
+benjamin_thoge <- c("82154Oct24124237", "26130Oct24134943", "23146Oct24092943", "28150Oct24103651", "35135Oct24114025", "108135Oct25083926", "54109Oct25094626", "43165Oct25113104", "102102Oct25140353", "79133Oct25165304", "60121Oct26084101", "50140Oct26095013", "44110Oct26112813", "57149Oct26125733", "46169Oct26162511", "71119Oct26174708")
+sarah_madaga_personal_request <- c("93169Oct26131341")
+eric_obose_random_set <- c("29118Oct26140420", "86135Oct24161636","77188Oct24112251", "24129Oct28100903", "29150Oct25143837", "20162Oct24145318", "13159Oct26144748", "27179Oct28162833")
+ruth_ndungu_too_quick <- c("75160Oct31130439", "70182Oct31132452", "58176Oct31134841")
+omolo_no_gap_between_responses <- c("103194Oct26094623", "58124Oct26104601", "85141Oct26153001", "66112Oct26162143", "72126Nov3092855", "54181Nov3101520")
+evans_otieno_too_quick <- c("78146Nov10131856", "102146Nov10100301")
+howard_too_quick <- c("105137Nov7151041", "37132Nov7174124")
+omondi_dennis_no_gap <- c("105141Nov7143707", "36112Nov7154916")
+beverlyne_weird_overlap <- c("102186Nov11113950", "66187Nov11114642")
+ruth_kilobi_suspected_fraud <- c("70153Oct26141922", "91169Oct26085723", "104114Oct26105339", "74166Nov11095437", "105101Nov15104428")
+evant_otieno_additional <- c("109125Nov14101254", "85166Nov14141234", "94168Nov11110919")
+ruth_kilobi_additonal <- c("27167Nov6110908", "88103Nov9095426", "59110Nov11114302", "18143Nov13120236", "29113Nov14140631", "23135Nov14104347")
+lydia_additional <- c("42181Nov10101217", "27198Nov10135453", "47194Nov14091248", "67192Nov15085631", "67135Nov15115629")
+sarah_magada_double_phonenumber <- c("73137Nov15121714", "52200Nov18134536")
+jones_kipsang_arbitrary <- c("42104Oct28102106", "21118Nov20122945")
+kennedy_kibor_no_gap <- c("68146Nov17095241", "16187Nov17103553")
+peninah_mwongeli_kioko_no_gap <- c("93127Nov18085704", "37196Nov18100158")
+mirriam_mukosi_additional <- c("30159Nov15124708", "21171Nov21110251", "86121Nov22144655", "62188Nov24120954")
+irene_omondi_additional <- c("50137Nov15131224", "20147Nov17174035", "69103Nov21092339", "20191Nov23100429")
+wasike_mahmoud_additional <- c("83126Nov15133300", "68144Nov18134828", "102168Nov24085714", "67159Nov22115501")
+catherine_njuguna_additional <- c("13102Nov13141723", "52169Nov17150050", "89196Nov20152652", "38120Nov23175924")
+Peninah_and_monica_anyango_doublrecruitment <- c("82151Oct26140757", "42123Nov28144602")
+kevin_onchana_double_recruitment <- c("92172Nov25140538", "48108Nov29132333")
+valentine_peter_masoni_double_recruitment <- c("105112Nov11135758", "101190Nov29155958")
+lenox_catherine_mutuku_double_recruitment <- c("18165Nov18092653", "104114Nov25104930")
+jones_kipsang_additional <- c("32198Nov25121138", "39134Nov28084113", "105123Nov29083025", "107136Nov30143035")
+amos_osumu_additional <- c("47195Nov24103631", "44178Nov25111005", "101112Nov27101737", "71162Nov29145936")
+dennis_omondi_additional <- c("32156Nov24075430", "64155Nov27122439", "28188Nov28144631", "75157Nov30110421")
+kennedy_kibor_additional <- c("86195Nov23141020", "59184Nov24131501", "102141Nov27140058", "100108Nov29122156")
+kennedy_omune_additional <- c("15141Nov13151758", "25179Nov16122327", "44197Nov17145055", "94140Nov18114951")
+
+# Add audits for those we overlooked.
+unaudited_fos <- c("Barnice Owiti", "Samuel Sururu", "Mary Kadzo Ngowa", "Boniface Mureithi", "Valentine Bwire", "Diana Musembi", "Stephen Ng'ang'a", "Emmanuel Simiyu", "Howard Sindani", "Churchill Steve Otieno", "Alice Awino", "Alice Mwende Muema", "Esther Adhiambo", "Oscar Musumba", "Shanice Linah Adhiambo", "Linah Nyarua Waithera", "Winnie Wafula", "Domitila Mutunga", "Tabitha Etyang", "Sahara Mohammed", "Sarah Madaga", "Yvonne Ochieng", "Nereah Okeyo", "Daisy Odongo", "Everlyne Muema", "Roderick Mayaka", "Hellen Sayano")
+current_audit_state <- c(0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0)
+current_audit_state_vec <- c(abs(current_audit_state-2))
+names(current_audit_state_vec) <- unaudited_fos
+set.seed(34)
+unaudited_df <- baseline_data %>% 
+  filter(en_name %in% unaudited_fos) %>% 
+  filter(!is.na(audio)) %>% 
+  group_by(en_name) %>%
+  sample_n(2) %>% 
+  mutate(row_num = row_number()) %>% 
+  filter(row_num <= map_dbl(en_name, ~ current_audit_state_vec[.x])) %>%
+  dplyr::select(-row_num)
+
+# Add more audits for those that were dismissed or temporarily suspended to establish consistency over time of their behaviour or identify when it started/stopped to delete data in an informed way
+
+# Read overview data of audio audits of frauds
+temp <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1714779342",
+           sheet = "FOs suspected of fraud")
+# For which dates did we do audios
+all_detected_dates <- str_extract_all(temp$`When did they do surveys poorly`, "[0-9]+[thsrd]{2} [A-Za-z]{3} [0-9]{4}")
+all_detected_dates_clean <- lapply(all_detected_dates, str_remove_all, "st|nd|rd|th")
+all_detected_dates_dateobj <- lapply(all_detected_dates_clean, as.Date, format = "%d %b %Y")
+bad_data_date_ranges <- lapply(all_detected_dates_dateobj, range)
+bad_data_date_ranges_df <- data.frame(cbind(temp$`FO name`, t(data.frame(bad_data_date_ranges))), row.names = NULL)
+colnames(bad_data_date_ranges_df) <- c("en_name", "first_bad_detected", "last_bad_detected")
+
+# Get more data to cover all weeks from the 24th October to the 15th December
+tmp_list <- lapply(bad_data_date_ranges_df$en_name, function(i) range(baseline_data$SubmissionDate[baseline_data$en_name == i]))
+bad_data_date_ranges_df <- cbind(bad_data_date_ranges_df, t(data.frame(tmp_list)), row.names = NULL)
+colnames(bad_data_date_ranges_df) <- c("en_name", "first_bad_detected", "last_bad_detected", "first_survey", "last_survey")
+
+uncover_unexplored_dates <- function(fo_name){
+  fo_date_range_all <- baseline_data$SubmissionDate[baseline_data$en_name == fo_name]
+  fo_date_range_bad_detected <- as_date(unlist(bad_data_date_ranges_df[bad_data_date_ranges_df$en_name == fo_name,c("first_bad_detected", "last_bad_detected")]))
+  fo_date_range_unexplored <- fo_date_range_all[fo_date_range_all < fo_date_range_bad_detected[1] | fo_date_range_all > fo_date_range_bad_detected[2]]
+  
+  return(fo_date_range_unexplored)
+}
+x <- lapply(bad_data_date_ranges_df$en_name, uncover_unexplored_dates)
+names(x) <- bad_data_date_ranges_df$en_name
+
+sample_more_audits <- function(fo_name, n){
+  
+  fo_date_range_bad_detected <- as_date(unlist(bad_data_date_ranges_df[bad_data_date_ranges_df$en_name == fo_name,c("first_bad_detected", "last_bad_detected")]))
+
+  temp <- baseline_data %>% 
+    filter(en_name == fo_name) %>% 
+    mutate(submission_date_dateonly = as_date(submission_date_dateonly)) %>% 
+    filter(submission_date_dateonly < fo_date_range_bad_detected[1] | submission_date_dateonly > fo_date_range_bad_detected[2]) %>% 
+    filter(!is.na(audio)) %>% 
+    dplyr::select(final_ID, submission_date_dateonly) %>% 
+    sample_n(n)
+  
+  return(temp$final_ID)
+}
+
+# Sample more for the cheaters
+set.seed(24)
+additional_cheater_scrutiny <- c(sample_more_audits("Evans Otieno", 5),
+sample_more_audits("Samson Gwada", 6),
+sample_more_audits("Kevin Onchana", 6),
+sample_more_audits("Lydia Kariuki", 6),
+sample_more_audits("Ruth Wanjiru Ndungu", 5),
+sample_more_audits("Catherine Njuguna", 5),
+sample_more_audits("Wasike Mahmoud Mukoche", 5),
+sample_more_audits("Peninah Mwongeli Kioko", 5),
+sample_more_audits("Ruth Kilobi", 4),
+sample_more_audits("Benjamin Thoge", 4),
+sample_more_audits("Eric Obose", 4),
+sample_more_audits("Mirriam Mukosi", 4),
+sample_more_audits("Irene Omondi", 4),
+sample_more_audits("Jones Kipsang", 4),
+sample_more_audits("Omondi Dennis Robert", 5),
+sample_more_audits("Omolo Kennedy Omune", 5))
+
+# Amos Osumo has almost no audios...adding then manually
+amos_osumo_additional <- c("65169Nov2130949", "81127Nov2154740", "71188Nov7095006", "101112Nov27101737", "81200Nov27164712")
+
+# COMPILE FINAL VECTOR WITH ALL FINAL_IDs 
+manual_audio_audits <- unique(c(ids_cluster207_dense, benjamin_thoge, sarah_madaga_personal_request, eric_obose_random_set, ruth_ndungu_too_quick, omolo_no_gap_between_responses, evans_otieno_too_quick, howard_too_quick, omondi_dennis_no_gap, beverlyne_weird_overlap, ruth_kilobi_suspected_fraud, evant_otieno_additional, ruth_kilobi_additonal, lydia_additional, sarah_magada_double_phonenumber, jones_kipsang_arbitrary, kennedy_kibor_no_gap, peninah_mwongeli_kioko_no_gap, mirriam_mukosi_additional, irene_omondi_additional, wasike_mahmoud_additional, catherine_njuguna_additional, Peninah_and_monica_anyango_doublrecruitment, kevin_onchana_double_recruitment, valentine_peter_masoni_double_recruitment, lenox_catherine_mutuku_double_recruitment, jones_kipsang_additional, amos_osumu_additional, dennis_omondi_additional, kennedy_kibor_additional, kennedy_omune_additional, unaudited_df$final_ID, additional_cheater_scrutiny, amos_osumo_additional))
+
+temp_df2 <- baseline_data %>% 
+  filter(final_ID %in% manual_audio_audits) %>%
+  mutate(submission_date_dateonly = as.character(submission_date_dateonly)) %>%
+  mutate(duration_mins = round(duration/60)) %>% 
+  dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, audio)
+
+manual_audio_audits[64]
+
+manual_audio_audits %in% temp_df2$final_ID
+
+# Order properly
+temp_df2 <- temp_df2[match(manual_audio_audits, temp_df2$final_ID),] 
+temp_df2 <- temp_df2[!is.na(temp_df2$final_ID),]
+
+range_write(data = temp_df2, 
+            ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+              sheet = "Manual_Audio_Audits",
+              range = "A2",
+              reformat = F,
+              col_names = F)
+
+############# Add manual backchecks
+
+ruth_ndungu_additional <- c("24189Oct28104720", "105184Oct28112034", "92136Oct28124626")
+duplicate_phonenumber_different_name <- c("37128Nov10152101")
+ruth_kilobi <- c("104196Oct26115513")
+evans_otieno <- c("78146Nov10131856", "102146Nov10100301")
+samson_gwada_super_short <- c("26159Nov17143958", "75144Nov17141622")
+amos_too_quick <- c("105110Nov28163406", "25126Nov28132113")
+yvonne_too_quick <- c("13173Nov24101050", "25160Nov25110620", "52146Nov24105346")
+
+manual_backchecks <- unique(c(benjamin_thoge, ruth_ndungu_too_quick, ruth_ndungu_additional, duplicate_phonenumber_different_name, ruth_kilobi, evans_otieno, samson_gwada_super_short, amos_too_quick, yvonne_too_quick))
+
+
+baseline_data %>% 
+  filter(final_ID %in% manual_backchecks) %>%
+  mutate(submission_date_dateonly = as.character(submission_date_dateonly)) %>%
+  mutate(duration_mins = round(duration/60)) %>% 
+  dplyr::select(final_ID, submission_date_dateonly, duration_mins, en_name, county_name_fo_location, B0_cluster, B1_name, B7_phonenumber, audio) %>%
+  range_write(ss = "https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=0",
+              sheet = "Backchecks",
+              range = "A2",
+              reformat = F,
+              col_names = F)
+
+```
+
+### 2.6.1 Audio Audit Outcome Visualisation
+
+```{r}
+
+# Read in all audits/backchecks
+regular_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Regular_Audio_Audits")
+manual_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Manual_Audio_Audits") %>% 
+  filter(!is.na(audio))
+backchecks <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Backchecks")
+
+all_checks_outcomes <- data.frame(rbind(cbind(regular_audio_audits$en_name, regular_audio_audits$SubmissionDate,regular_audio_audits$`Final Outcome (Box Ticking)`),
+                             cbind(manual_audio_audits$en_name, manual_audio_audits$SubmissionDate, manual_audio_audits$`Final Outcome (Box Ticking)`),
+                             cbind(backchecks$en_name, backchecks$SubmissionDate, backchecks$`Final Outcome (Box Ticking)`)))
+colnames(all_checks_outcomes) <- c("en_name", "Date", "Outcome")
+
+# Convert Date to a factor for stacking in ggplot
+all_checks_outcomes$Date <- as.factor(all_checks_outcomes$Date)
+
+
+# Create the ggplot stacked bar chart
+ggplot(all_checks_outcomes) +
+  geom_bar(aes(x = en_name, fill = Outcome), stat = "count", position = "stack") +
+  facet_grid(~ Date) +
+  labs(y = "Entity Name", x = "Count", fill = "Outcome") +
+  theme_minimal()
+
+
+ggplot(all_checks_outcomes[order(all_checks_outcomes$Date,decreasing=T),]) +
+  geom_bar(aes(x = Date, y = en_name, fill = Outcome), stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
+  theme_minimal()
+
+plot <- all_checks_outcomes %>% 
+  arrange(desc(Date)) %>% 
+  mutate(Date = str_remove_all(as.character(Date), "-"), Date = as.numeric(Date), Date = as.factor(Date)) %>%
+  ggplot() +
+  geom_bar(aes(x = en_name, y = Date, fill = Outcome), stat = "identity") +
+  scale_fill_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
+  theme_minimal() +
+  coord_flip()
+ggplotly(plot)
+
+plot <- ggplot(all_checks_outcomes) +
+  geom_point(aes(x = Date, y = en_name, color = Outcome)) +
+  scale_color_manual(values = c("Poor Quality (not fraud)" = "yellow", "All good" = "green", "Fraud" = "red")) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+ggplotly(plot)
+
+
+```
+
+
+## 2.7 Cookied Image Check - Pipeline
+
+```{r}
+
+cookies_verification_tracker <- read_sheet("https://docs.google.com/spreadsheets/d/14n18xOWBbRuFYj7VXLcdgi-AxmBVN0qUfbJWghto4ac/edit#gid=0")
+
+cookies_tobe_verified <- baseline_data %>% 
+  filter(online_treatment_check == 1 & cookie_check == 1) %>% 
+  dplyr::select(en_name, SubmissionDate, county_name_fo_location, website_proof_picture) %>% 
+  mutate(SubmissionDate = as.character(SubmissionDate)) %>% 
+  filter(!(website_proof_picture %in% cookies_verification_tracker$`Link to Image`))
+
+range_write(cookies_tobe_verified, 
+            ss = "https://docs.google.com/spreadsheets/d/14n18xOWBbRuFYj7VXLcdgi-AxmBVN0qUfbJWghto4ac/edit#gid=0",
+            sheet = "Cookie Image Tracker",
+            range = paste0("A",nrow(cookies_verification_tracker)+2),
+            col_names = F,
+            reformat = F)
+
+```
+
+# 3. Tracking recruitment
+
+## 3.2 Keep track of recruitment progress to cross-check with Isaacs tracking (and vice versa)
+
+```{r}
+
+# How many surveys are completed overall
+baseline_data %>% summarise(n_overall = n())
+
+# By County
+baseline_data %>% 
+  group_by(county_name) %>% 
+  summarise(n_by_county = n()) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1Jwddi0uba2rkRBK6EPV5wKNf2JrLMK8Ko19LOq1Aj90/edit#gid=0",
+              sheet = "Overall",
+              range = "A2",
+              col_names = F,
+              reformat = F)
+
+# By cluster
+baseline_data %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n_by_cluster = n()) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1Jwddi0uba2rkRBK6EPV5wKNf2JrLMK8Ko19LOq1Aj90/edit#gid=0",
+              sheet = "Overall",
+              range = "D2",
+              col_names = F,
+              reformat = F)
+
+# By FO
+baseline_data %>% 
+  group_by(en_name) %>% 
+  summarise(n_by_FO = n()) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1Jwddi0uba2rkRBK6EPV5wKNf2JrLMK8Ko19LOq1Aj90/edit#gid=0",
+              sheet = "Overall",
+              range = "G2",
+              col_names = F,
+              reformat = F)
+
+
+# By County By FO
+baseline_data %>% 
+  group_by(county_name, en_name) %>% 
+  summarise(n_byCounty_byFO = n()) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1Jwddi0uba2rkRBK6EPV5wKNf2JrLMK8Ko19LOq1Aj90/edit#gid=0",
+              sheet = "Overall",
+              range = "J2",
+              col_names = F,
+              reformat = F)
+
+```
+
+## 3.3 Forecast recruitment timeline
+
+```{r eval=FALSE, include=FALSE}
+
+temp_data <- baseline_data %>% 
+  group_by(submission_date_dateonly) %>% 
+  summarise(n_by_day = n())
+
+# Calculate the cumulative sum
+temp_data$cum_sum <- cumsum(temp_data$n_by_day)
+
+# Convert date_day to Date class and set it as a ts (time series) object
+ts_data <- ts(temp_data$cum_sum, start=c(year(min(temp_data$submission_date_dateonly)), yday(min(temp_data$submission_date_dateonly))), frequency=365)
+
+# Use auto.arima() to automatically fit the best ARIMA model
+fit <- auto.arima(ts_data)
+
+# Forecast up to a specified date
+days_to_forecast <- as.numeric(as.POSIXct("2023-12-15", tz = "UCT") - max(temp_data$submission_date_dateonly))
+forecasted <- forecast(fit, h=days_to_forecast)
+
+# Plot the forecast
+plot(forecasted)
+
+# Plot again with ggplot
+forecasted_df <- data.frame(forecasted)
+forecasted_df$date <- seq(as_date(max(temp_data$submission_date_dateonly)+1), by = "days", length.out = days_to_forecast)
+
+plot <- forecasted_df %>% 
+  ggplot() + 
+  geom_line(aes(y = Point.Forecast, x = date)) +
+  theme_minimal()
+ggplotly(plot)
+
+```
+
+## 3.4 Are the clusters moving together? Where do we need to re-allocate
+
+```{r}
+# Cumulative Progress Across Clusters, Projections on Completion
+
+baseline_data %>% 
+  group_by(B0_cluster) %>% 
+  summarise(n = n()) %>% 
+  arrange(B0_cluster)
+
+
+as_date("2023-11-01") + 180
+
+```
+
+```{r}
+
+############################################### COMPUTE AVERAGE DAILY OUTPUT BY CLUSTER
+
+# 1. Average output per day, per cluster, per FO (excluding 0 output days, adjusting for FOs worked in cluster)
+average_output <- baseline_data %>%
+  group_by(B0_cluster, en_name, submission_date_dateonly) %>%
+  summarise(daily_responses = n(), .groups = "drop_last") %>%
+  group_by(B0_cluster, en_name) %>%
+  summarise(average_responses_by_cluster_by_fo = mean(daily_responses[daily_responses > 0]), .groups = "drop_last") %>% 
+  summarise(average_responses_by_cluster_by_fo = mean(average_responses_by_cluster_by_fo))
+
+# Assign a baseline productivity to clusters with no data
+baseline_productivity <- mean(average_output$average_responses_by_cluster_by_fo, na.rm = T)-1
+average_output$average_responses_by_cluster_by_fo[average_output$average_responses_by_cluster_by_fo < 1.00001] <- baseline_productivity
+
+# Remove clusters that have been abandoned
+average_output <- average_output[!(average_output$B0_cluster %in% c(197, 37, 186, 414, 141, 10, 363, 360, 248, 281, 378, 54)),]
+
+# Add all clusters currently in the game where no data has been collected yet + add baseline productivity
+current_clusters <- surveycto_choices[surveycto_choices$list_name == "cluster_id" & !is.na(surveycto_choices$list_name),]$value
+#new_clusters <- data.frame(B0_cluster = current_clusters[!(current_clusters %in% average_output$B0_cluster)], average_responses_by_cluster_by_fo = baseline_productivity)
+#average_output <- rbind(average_output, new_clusters)
+
+############################################### OPTIMISE FO ALLOCATION AND DIAGNOSE PREDICTED PROGRESS BY 15TH DECEMBER 2023
+
+# Compute targets per cluster
+vcf_final_clusters_allocated <- read.csv("Sampling/Data Exports/vcf_final_clusters_allocated.csv")[,-1]
+average_output_and_targets <- merge(average_output, vcf_final_clusters_allocated, by.x = "B0_cluster", by.y = "cluster_id")
+recruitment_baseline_samplesize_discrepancy <- c("Control" = 121, "Online_Only" = 121, "Offline_Only" = 143, "Online_Offline" = 143)
+average_output_and_targets$target_n <- unname(recruitment_baseline_samplesize_discrepancy[average_output_and_targets$group])
+
+# Compute current sample size per cluster
+temp_data <- baseline_data %>% group_by(B0_cluster) %>% summarise(n = n()) %>% arrange(B0_cluster)
+average_output_and_currents_and_targets <- merge(average_output_and_targets, temp_data, by = "B0_cluster", all.x = T)
+average_output_and_currents_and_targets$n[is.na(average_output_and_currents_and_targets$n)] <- 0
+
+# Days left until 15th December
+days_left <- as.integer(as.Date("2023-12-15") - max(as.Date(baseline_data$submission_date_dateonly)))
+
+# Given average daily progress, and days left how many FOs need to work in which clusters to equalise sample size (assume we have 64 FOs per day....we had 66 but Ruth is being fired and on average 1 per day is sick)
+fo_days <- days_left*64
+
+# Initialise with uniform distribution of FO days
+average_output_and_currents_and_targets$outcome_n <- average_output_and_currents_and_targets$n + ((fo_days/nrow(average_output_and_currents_and_targets))*average_output_and_currents_and_targets$average_responses_by_cluster)
+average_output_and_currents_and_targets$fo_days_deployed <- fo_days/nrow(average_output_and_currents_and_targets)
+
+# This function amplifies the re-allocaction to be not linear but exponential, i.e. cluster most in need don't get proportionately more FO days but exponentially more
+amplify_and_normalize <- function(vec, power = 1) {
+    # Apply a power transformation to each element
+    amplified_vec <- vec ^ power
+
+    # Normalize by dividing each element by the sum of the transformed vector
+    normalized_vec <- amplified_vec / sum(amplified_vec)
+
+    return(normalized_vec)
+}
+
+# This function is the actual optimiser that takes from surplus clusters and gives to lagging clusters
+optimize_towards_zero <- function(vec, limit_vec) {
+    # Calculate the total amount available for redistribution (sum of the minimum of positive values and their limits)
+    total_redistribution <- sum(pmin(vec[vec > 0], limit_vec[vec > 0]))
+    
+    # Subtract from positive values
+    adjusted_vec <- vec
+    adjusted_vec[vec > 0] <- vec[vec > 0] - pmin(vec[vec > 0], limit_vec[vec > 0])
+    
+    # Add to the negative values by share of negativity
+    
+    share_temp <- amplify_and_normalize(adjusted_vec[adjusted_vec < 0]/sum(adjusted_vec[adjusted_vec < 0]), power = 2)
+    adjusted_vec[adjusted_vec < 0] <- adjusted_vec[adjusted_vec < 0] + (total_redistribution*share_temp)
+
+    # Calculate the amount of change for each element
+    change_vector <- adjusted_vec - vec
+
+    return(list(original_vector = vec,
+                adjusted_vector = adjusted_vec,
+                change_vector = change_vector))
+}
+
+# This function iterates this optimisation process
+iterative_optimizer <- function(data_input, initial_limit_vector, productivity_vector, max_iterations = 100, tolerance = 1e-6) {
+  
+    diff_outcome_target <- data_input$outcome_n - data_input$target_n
+    fo_days_over_under <- diff_outcome_target/productivity_vector
+
+    current_vector <- fo_days_over_under
+    limit_vector <- initial_limit_vector
+    outcome_n <- initial_limit_vector * productivity_vector
+    prev_outcome_n <- outcome_n
+    variation <- sd(outcome_n)
+
+    for (i in 1:max_iterations) {
+      
+        diff_outcome_target <- data_input$outcome_n - data_input$target_n
+        fo_days_over_under <- diff_outcome_target/productivity_vector
+        
+        result <- optimize_towards_zero(current_vector, limit_vector)
+        
+        # Update limit and outcome vectors
+        new_limit_vector <- limit_vector + result$change_vector
+        new_outcome_n <- data_input$n + (new_limit_vector * productivity_vector)
+        
+       
+        
+        # Check for convergence
+        new_variation <- sd(new_outcome_n)
+        if (abs(new_variation - variation) < tolerance) {
+            break
+        }
+        
+        # Update for next iteration
+        current_vector <- result$adjusted_vector
+        limit_vector <- new_limit_vector
+        outcome_n <- new_outcome_n
+        variation <- new_variation # Update variation
+        
+    }
+
+    return(list(final_outcome_n = new_outcome_n, 
+                final_fo_days_deployed = new_limit_vector, 
+                final_fo_days_over_under = result$adjusted_vector,
+                iterations = i))
+}
+
+
+# Execute the optimisation
+temp <- iterative_optimizer(data_input = average_output_and_currents_and_targets,
+                            initial_limit_vector = average_output_and_currents_and_targets$fo_days_deployed,
+                            productivity_vector = average_output_and_currents_and_targets$average_responses_by_cluster, 
+                            max_iterations = 100, 
+                            tolerance = 1e-180)
+
+# Add variables to overview data.frame to communicate to SFOs
+average_output_and_currents_and_targets$optimised_fo_days_deployed <- temp$final_fo_days_deployed
+average_output_and_currents_and_targets$optimised_outcome_n <- temp$final_outcome_n
+average_output_and_currents_and_targets$optimised_final_fo_days_over_under <- temp$final_fo_days_over_under
+average_output_and_currents_and_targets$predicted_percentage_target_completion <- average_output_and_currents_and_targets$optimised_outcome_n/average_output_and_currents_and_targets$target_n
+
+# Export to Googlesheets
+#average_output_and_currents_and_targets %>% 
+#  dplyr::select(B0_cluster, average_responses_by_cluster_by_fo, group, target_n, n, optimised_fo_days_deployed,optimised_outcome_n, #optimised_outcome_n) %>% 
+#  range_write(ss = "https://docs.google.com/spreadsheets/d/1qjiBQzsF3KVVPh0eQH8X3fhCrPaAp-TIUeWC7yNTZ5I/edit#gid=824952358",
+#              sheet = "[V3 - new] Optimising FO Allocation",
+#              range = "A2",
+#              col_names = F,
+#              reformat = F)
+
+```
+
+
+# 4. By FO
+
+## 4.1 Recruits + Recruitments outside of the cluster
+
+```{r}
+
+# Recruits per FO
+survey_locations %>% 
+  group_by(en_name) %>% 
+  summarise(number_completed_surveys = n()) %>% 
+  arrange(number_completed_surveys)
+
+# Recruits outside of clusters by FO
+survey_locations %>% 
+  group_by(en_name) %>% 
+  summarise(outside_cluster_n = sum(!within_cluster),
+            mean_accuracy = mean(geopoint_recruitment.Accuracy)) %>% 
+  arrange(desc(outside_cluster_n))
+
+```
+
+## 4.2 Duration distribution of recruitment survey
+
+```{r}
+
+# Summary Stats on Duration in Minutes 
+temp_df <- baseline_data %>% 
+  group_by(en_name) %>% 
+  summarise(duration_mean = round(mean(duration/60)), 
+            duration_median = round(median(duration/60)),
+            duration_max = round(max(duration/60)), 
+            duration_min = round(min(duration/60)), 
+            numer_outliers_over = sum(zscore_duration > 2), 
+            numer_outliers_under = sum(zscore_duration < -2)) %>% 
+  arrange(duration_min)
+temp_df
+
+temp_df <- baseline_data %>% 
+  filter(submission_date_dateonly >= as_date("2023-11-23")) %>%
+  mutate(duration = duration/60) %>% 
+  dplyr::select(final_ID, en_name, duration, endtime)
+temp_df
+
+# Is there any surveys that ended much later than they started?
+baseline_data %>% 
+   mutate(diff_start_end_mins = endtime - starttime) %>% 
+   group_by(en_name) %>% 
+   summarise(diff_start_end_mins_mean = round(mean(diff_start_end_mins)), 
+            diff_start_end_mins_median = round(median(diff_start_end_mins)),
+            diff_start_end_mins_max = round(max(diff_start_end_mins)), 
+            diff_start_end_mins_min = round(min(diff_start_end_mins)), 
+            numer_outliers_over = sum(zscore_duration > 2), 
+            numer_outliers_under = sum(zscore_duration < -2)) %>% 
+  arrange(diff_start_end_mins_mean)
+
+
+#### HOW MANY FOUND A NEW PARTICIPANT IN UNDER 5 MINUTES
+
+# Assuming df has columns en_name, starttime, and endtime, and they are already in datetime format
+results <- baseline_data %>%
+  mutate(day = as.Date(starttime)) %>%
+  group_by(en_name, day) %>%
+  # Perform a self-join to compare each starttime with endtimes in the group
+  do({
+    self_join <- full_join(., ., by = c("en_name", "day"))
+    # Filter out the same row matches
+    self_join <- filter(self_join, starttime.x < endtime.y)
+    # Check if starttime is within less than 10 minutes of endtime
+    self_join <- mutate(self_join, within_10 = abs(difftime(starttime.x, endtime.y, units = "mins")) < 10)
+    # Now summarize and count the true values of within_10
+    summarise(self_join, count = sum(within_10, na.rm = TRUE))
+  }) %>%
+  ungroup()
+
+# View the results
+results %>% 
+  filter(day >= as_date("2023-11-16")) %>% 
+  arrange(desc(count))
+
+
+temp_df <- baseline_data %>% 
+  mutate(day = as.Date(starttime)) %>% 
+  filter(en_name %in% results$en_name[results$count > 0] & day %in% results$day[results$count > 0]) %>% 
+  dplyr::select(en_name, starttime, endtime, duration, month, day, hour, minute, final_ID) %>% 
+  arrange(en_name, day, hour, minute)
+temp_df
+
+```
+
+
+## 4.3 Arbitrary Responses
+
+```{r}
+
+# How often does this happen per FO
+arbitrary_responses_df %>%
+  #filter(baseline_data$submission_date_dateonly >= "2023-11-23") %>% 
+  group_by(en_name) %>% 
+  summarise(mean_number_groups_single_response = mean(number_groups_single_resp),
+          mean_share_groups_single_response = mean(share_groups_single_resp)) %>% 
+  arrange(desc(mean_number_groups_single_response))
+
+
+# Which groups are the ones skipped most by FO
+temp_df <- arbitrary_responses_df %>%
+  # Separate Groups into rows
+  separate_rows(groups_single_resp, sep = ", ") %>%
+  # Count occurrences
+  count(en_name, groups_single_resp) %>%
+  # Convert to required format
+  group_by(en_name) %>%
+  summarise(GroupSummary = paste0(groups_single_resp, " (", n, ")", collapse = ", "))
+temp_df
+
+```
+
+## 4.4 Breakdown of Demographics (check for imbalances)
+
+```{r}
+# Compute Summary Stats for the key demographics
+# lapply(apply(temp_data_demographics, MARGIN = 2, FUN = function(i) tblFun_II(i, baseline_data$en_name)), t)
+```
+
+## 4.5 Outliers, “don’t know” patterns, + time's taken to respond
+
+```{r}
+
+# Don't Know patterns by FO
+temp_df <- cbind(en_name = baseline_data$en_name, data.frame(baseline_data[,!colnames(baseline_data) %in% c("en_name")] == 88))
+temp_df$row_sum <- rowSums(temp_df[,-1], na.rm = T)
+temp_df %>% 
+  filter(baseline_data$submission_date_dateonly >= as_date("2023-11-16")) %>% 
+  group_by(en_name) %>% 
+  summarise(n(), dont_know_sum = sum(row_sum), dont_know_mean = mean(row_sum), dont_know_max =max(row_sum)) %>% 
+  arrange(desc(dont_know_mean))
+
+# Refuse to answer patterns by FO
+temp_df <- cbind(en_name = baseline_data$en_name, data.frame(baseline_data[,!colnames(baseline_data) %in% c("en_name")] == 99))
+temp_df$row_sum <- rowSums(temp_df[,-1], na.rm = T)
+temp_df %>% 
+  filter(baseline_data$submission_date_dateonly >= as_date("2023-11-16")) %>% 
+  group_by(en_name) %>% 
+  summarise(n(), refuse_sum = sum(row_sum), refuse_mean = mean(row_sum), refuse_max = max(row_sum)) %>% 
+  arrange(desc(refuse_mean))
+
+
+# Remove clutter
+rm(temp_df)
+
+```
+
+## 4.6 Do FOs submit survey responses in a timely manner or is there big gaps
+
+```{r}
+
+# How much was the delay of uploading
+baseline_data$upload_delay_mins <- as.numeric(round((baseline_data$SubmissionDate - baseline_data$endtime)/60, 1))
+
+# By FO
+baseline_data %>% 
+  group_by(en_name) %>% 
+  summarise(mean_upload_delay_mins = mean(upload_delay_mins)) %>% 
+  arrange(desc(mean_upload_delay_mins))
+
+# By County (maybe there is some network issues)
+baseline_data %>% 
+  group_by(county_name) %>% 
+  summarise(mean_upload_delay_mins = mean(upload_delay_mins))
+
+```
+
+## 4.7 Deciding which FOs to keep
+
+### Performance - Quantiy 
+
+```{r}
+
+# Recruits per FO
+en_performance_quantity <- baseline_data %>% 
+  group_by(en_name) %>% 
+  summarise(number_completed_surveys = n()) %>% 
+  arrange(number_completed_surveys)
+
+```
+
+### Performance - Quality Audited
+
+```{r}
+
+# Read in all audits/backchecks
+regular_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Regular_Audio_Audits")
+manual_audio_audits <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Manual_Audio_Audits") %>% 
+  filter(!is.na(audio))
+backchecks <- read_sheet("https://docs.google.com/spreadsheets/d/17sU9kZRTGZQYdCAqtMqpXN6dd7NU-KQ4MHW5tOQDbfM/edit#gid=1251707421",
+           sheet = "Backchecks")
+
+
+# overview table
+all_checks_outcomes <- data.frame(rbind(cbind(regular_audio_audits$en_name, regular_audio_audits$SubmissionDate,regular_audio_audits$`Final Outcome (Box Ticking)`), cbind(manual_audio_audits$en_name, manual_audio_audits$SubmissionDate, manual_audio_audits$`Final Outcome (Box Ticking)`), cbind(backchecks$en_name, backchecks$SubmissionDate, backchecks$`Final Outcome (Box Ticking)`)))
+colnames(all_checks_outcomes) <- c("en_name", "Date", "Outcome")
+all_checks_outcomes$Date <- as_date(all_checks_outcomes$Date)
+all_checks_outcomess <- all_checks_outcomes %>% arrange(en_name, Date)
+
+# Which FOs to keep for the remainder of VCF
+fos_that_cheated <- unique(all_checks_outcomes$en_name[all_checks_outcomes$Outcome == "Fraud" & !is.na(all_checks_outcomes$Outcome)])
+
+en_performance_quality_audited <- all_checks_outcomes %>% 
+  filter(!(en_name %in% fos_that_cheated)) %>% 
+  group_by(en_name, Outcome) %>% 
+  summarise(n = n()) %>% 
+  mutate(score = case_when(Outcome == "All good" ~ n*1,
+                           Outcome == "Poor Quality (not fraud)" ~ n*-1,
+                           Outcome == "Fraud" ~ -Inf)) %>% 
+  summarise(audit_score = sum(score, na.rm = T)) %>% 
+  arrange(desc(audit_score))
+
+
+en_performance_quality_audited_additional <- all_checks_outcomes %>% 
+  filter(en_name %in% c("Ruth Kilobi", "Benjamin Thoge", "Esther Adhiambo")) %>% 
+  group_by(en_name, Outcome) %>% 
+  summarise(n = n()) %>% 
+  mutate(score = case_when(Outcome == "All good" ~ n*1,
+                           Outcome == "Poor Quality (not fraud)" ~ n*-1,
+                           Outcome == "Fraud" ~ -3)) %>% 
+  summarise(audit_score = sum(score, na.rm = T)) %>% 
+  arrange(desc(audit_score))
+
+en_performance_quality_audited <- rbind(en_performance_quality_audited, en_performance_quality_audited_additional)
+  
+```
+
+### Performance - Duration
+
+```{r}
+
+# How often did they conduct a survey below 20 minutes
+performance_too_short <- baseline_data %>% 
+  group_by(en_name) %>% 
+  summarise(below_20min = mean(duration/60 < 20)) %>% 
+  arrange(desc(below_20min))
+
+```
+
+### Performance - Arbitrary Responses
+
+```{r}
+
+# How many responses were exactly the same across groups
+performance_arbitrary <- arbitrary_responses_df %>%
+  group_by(en_name) %>% 
+  summarise(mean_number_groups_single_response = mean(number_groups_single_resp),
+          mean_share_groups_single_response = mean(share_groups_single_resp)) %>% 
+  arrange(desc(mean_number_groups_single_response))
+
+```
+
+### Final
+
+```{r}
+
+which_fos_to_keep <- purrr::reduce(list(en_performance_quality_audited, en_performance_quantity, performance_too_short, performance_arbitrary),dplyr::left_join, by = 'en_name')
+  
+final_score <- which_fos_to_keep %>% 
+  mutate_at(c("number_completed_surveys", "audit_score", "below_20min", "mean_number_groups_single_response", "mean_share_groups_single_response"), ~(scales::rescale(.) %>% as.vector)) %>% 
+  mutate(final_score = (number_completed_surveys + audit_score - below_20min - mean_share_groups_single_response), .after = 1) %>% 
+  arrange(desc(final_score)) %>% 
+    pull(final_score)
+
+which_fos_to_keep %>% 
+  mutate(final_score = round(final_score*100)) %>%
+  mutate(share_surveys_below_20mins = paste0(round(below_20min*100), "%")) %>% 
+  mutate(mean_share_qgroups_abitrary_response = paste0(round(mean_share_groups_single_response*100), "%")) %>% 
+  dplyr::select(en_name, final_score, number_completed_surveys, audit_score, share_surveys_below_20mins, mean_share_qgroups_abitrary_response) %>% 
+  arrange(desc(final_score)) %>% 
+  range_write(ss = "https://docs.google.com/spreadsheets/d/1ZjbIw7ThtvJC62DjnaFPHUCF23g5vtHyZkozlAypdvE/edit#gid=0",
+              reformat = F,
+              col_names = F,
+              range = "A2")
+  
+
+```
+
+```{r}
+baseline_data %>% 
+  group_by(cluster_treatment_group, B0_cluster) %>% 
+  summarise(n = n())
+```
+

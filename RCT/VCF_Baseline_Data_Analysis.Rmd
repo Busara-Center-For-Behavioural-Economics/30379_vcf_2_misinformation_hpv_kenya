@@ -1,0 +1,738 @@
+---
+title: "VCF_Baseline_Data_Analysis"
+author: "Jonathan Karl"
+date: "2024-02-22"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "purrr", "DescTools", "naniar", "ltm", "ggalluvial")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+```
+
+# Helper Functions
+
+```{r}
+
+## Table with relative frequencies
+tblFun <- function(x){
+  tbl <- sort(table(x), decreasing = T)
+  res <- cbind(tbl,sort(round(prop.table(tbl)*100,2), decreasing = T))
+  colnames(res) <- c('Count','Percentage')
+  res
+}
+
+tblFun_II <- function(x, y){
+  tbl <- table(x, y)
+  res <- apply(tbl, MARGIN = 2, FUN = function(x) round(prop.table(x)*100,2))
+  res
+}
+
+```
+
+## Read Data
+
+```{r}
+
+baseline_data <- read.csv("Data Exports/vcf2_rct_baseline_caregivers_clean.csv")
+
+```
+
+## Cleaning
+
+```{r}
+
+map <- c("1" = "Male", "2" = "Female", "77" = "Other (Please specify)")
+baseline_data$B2_gender <- unname(map[baseline_data$B2_gender])
+
+map <- c("1" = "18 years old", "2" = "18-24 years", "3" = "25-34 years", "4" = "35-44 years", "5" = "45-59 years", "6" = "60+ years")
+baseline_data$B3_age <- unname(map[baseline_data$B3_age])
+
+map <- c("1"= "Nairobi", "2"= "Kajiado", "3" = "Kiambu", "4"= "Machakos", "77" = "Other (Please specify)")
+baseline_data$B4_countylive <- unname(map[baseline_data$B4_countylive])
+
+map <- c("1" = "Shared", "2" = "Private")
+baseline_data$B7_shared <- unname(map[baseline_data$B7_shared])
+
+map <- c("1"= "Facebook", "2"= "Whatsapp", "3" = "Instagram", "4" = "TikTok", "5" = "Twitter", "6" = "YouTube", "77" = "Other (Please specify)")
+temp <- str_split(baseline_data$B8a_whichone, " ")
+
+map <- c("1" = "Less frequently", "2" = "Every 2 months", "3" = "Monthly", "4" = "More often than once a month", "5" = "Weekly", "6" = "More often than once a week")
+baseline_data$B15_hairdresserfreq <- unname(map[baseline_data$B15_hairdresserfreq])
+
+map <- c("1" = "Construction business", "2"= "Doctor", "3" = "Driver", "4" = "Running laundry service", "5" = "Mechanic", "6" = "Tailor", "7"	= "Running M-Pesa/ZAP kiosk", "8"	= "Drilling boreholes/building latrines", "9" =	"Collecting and selling firewood", "10"	= "Running hotel (diffferent from restaurant)", "11" =	"Running photocopy kiosk", "12"	= "Bicycle repair", "13"	= "Making bricks", "14"	= "Making/repairing boats", "15"	= "Providing transportation (e.g. boda, piki, matatu business)", "16" = "Selling raw produce (that is NOT cultivated by respondent but purchased elsewhere)", "17"	= "Selling clothes and choes", "18" = "Selling/trading fish", "19"	= "Selling crafts (baskets, pots, etc.)", "20"= "Selling prepared foods/running restaurant", "21" = "Electrician", "22"="Butcher", "23" = "Building ironsheet roofs", "24" = "Building thatch roofs", "27" =	"Local brewer", "28" =	"Teacher", "29"	= "Carpenter", "30" = "Farmer", "77"	= "Other enterprise (Please Specify)", "100"	= "Unemployed", "101"	= "Hair dresser/stylist/beautician/barber")
+baseline_data$B10_work <- unname(map[baseline_data$B10_work])
+
+map <- c("1" = "Single, never married", "2" = "In a relationship but not married", "3" = "Married", "4" = "Divorced or separated", "5" = "Widowed", "77" = "Other (Please specify)", "99" = "Refuse to answer")
+baseline_data$relationship_status <- unname(map[baseline_data$relationship_status])
+
+map <- c("1" = "Traditional African Religion", "2" = "Buddhism", "3" = "Christianity", "4" = "Hinduism", "5" = "Islam", "77" = "Other", "7" = "I do not practice any religion", "99" = "Refuse to answer")
+baseline_data$religion <- unname(map[baseline_data$religion])
+
+map <- c("1" = "Catholic", "2" = "Protestant", "3" = "Orthodox Church", "4" = "Seventh day Adventist", "77" = "Other")
+baseline_data$christianity_denomination <- unname(map[baseline_data$christianity_denomination])
+
+map <- c("1" = "0 - 5,000 KES", "2" = "5,001 - 20,000 KES", "3" = "20,001 - 50,000 KES", "4" = "50,001 - 100,000 KES", "5" = "Above 100,000 KES", "99" = "Refuse to Answer")
+baseline_data$income_month <- unname(map[baseline_data$income_month])
+
+```
+
+# 0. Demographics
+
+```{r}
+
+# Demographic Vars - Single Select
+demographic_vars <- c("B2_gender", "B3_age", "B4_countylive", "B4_countylive_specify", "B5_long", "B7_shared", "B15_hairdresserfreq", "B10_work", "relationship_status", "religion", "christianity_denomination", "income_month","B10_work_household_hairdresser_check", "B5_members", "B6_children", "B6a_number", "B6_childnu_count")
+demographic_vars_descriptives <- lapply(demographic_vars, function(i) tblFun(baseline_data[,i]))
+names(demographic_vars_descriptives) <- demographic_vars
+
+# Demographic Vars - Multi Select
+table(unlist(lapply(temp, function(i) unname(map[i]))))/nrow(baseline_data)
+
+```
+
+# 1. Detecting Manipulation
+
+```{r}
+manipulativeness_coding <- c("1" = T, "2" = T,  "3" = T, "4" = T, "5" = F, "6" = T, "7" = F, "8" = F, "9" = T, "10" = F, "11" = T, "12" = F)
+manipulative_posts <- names(manipulativeness_coding[manipulativeness_coding])
+non_manipulative_posts <- names(manipulativeness_coding[!manipulativeness_coding])
+
+hpv_specific <- c("1" = T, "2" = T,  "3" = T, "4" = F, "5" = T, "6" = F, "7" = T, "8" = T, "9" = F, "10" = F, "11" = F, "12" = F)
+
+techniques_used <- list("1" = c("Conspiracy theory", "Emotional language use"),
+                        "2" = c("Emotional language use, Conspiracy theory"),
+                        "3" = c("Fake account", "Emotional Language use", "Conspiracy theories"),
+                        "4" = c("Trolling"), 
+                        "5" = NA,
+                        "6" = c("Fake account", "Emotional Language Use", "Conspiracy Theory", "Discrediting Opponents"),
+                        "7" = NA,
+                        "8" = NA,
+                        "9" = c("Intergroup Polarisation", "Fake Account", "Emotional Language Use"),
+                        "10" = NA,
+                        "11" = c("Discreding Opponents"),
+                        "12" = NA)
+
+techniques_used_num <- list("1" = c("5", "2"),
+                        "2" = c("2", "5"),
+                        "3" = c("4", "2", "5"),
+                        "4" = c("6"), 
+                        "5" = NA,
+                        "6" = c("4", "2", "5", "1"),
+                        "7" = NA,
+                        "8" = NA,
+                        "9" = c("3", "4", "2"),
+                        "10" = NA,
+                        "11" = c("1"),
+                        "12" = NA)
+
+
+posts_content <- list("1" = "The Govt. doesn't want you to know - The HPV Vaccine causes EARLY menopause in women. BE CAREFUL!!!",
+                        "2" = "The HPV vaccine is part of larger, DANGEROUS program by foreign governments to stop your child from giving birth! Be scared, Be aware, Be safe!!",
+                        "3" = "Vaccinated girls will never get their menstrual cycles. Spread the word - boycott the HPV vaccine now!",
+                        "4" = "Protests for women's rights are actually an attempt by women to hide their own faults.", 
+                        "5" = "The World Health Organisation (WHO) and Ministry of Health (MoH) recently reported that 9 Kenyan women die of cervical cancer per day.",
+                        "6" = "Cityzen TV EXPOSES SCAM: NTV is refusing to report that the Government is knowingly spreading diseases through the airwaves and food supply!",
+                        "7" = "A recent study by the World Health Organisation (WHO) found that the best way to protect your children from HPV is to get them vaccinated against it.",
+                        "8" = "The Ministry of Health supports the use of the HPV vaccine as it can reduce the burden of cervical cancer in Kenya.",
+                        "9" = "All Kenyan politicians in the government are out to steal from the common mwananchi. They don't care about us! We need to fight back! We need to voice our suffering!",
+                        "10" = "The United Nations encourages countries and businesses to do their part to tackle climate change.",
+                        "11" = "Airtel's bundles are expensive and the network is poor. It makes no sense to get an Airtel line.",
+                        "12" = "Kenya's Interior Ministry has suspended the operations of cryptocurrency project Worldcoin due to data privacy concerns.")
+
+```
+
+## 1.1 Is this Post Manipulative?
+
+```{r}
+# Manipulativeness Assessment
+manipulativeness_assessment <- lapply(paste0("detect_misinfo_", 1:12,"_1"), function(i) tblFun(baseline_data[,i]))
+names(manipulativeness_assessment) <- paste(ifelse(manipulativeness_coding, "Manipulative", "Non-Manipulative"), 
+                                            "-",
+                                            ifelse(hpv_specific, "HPV-Specific", "Non-HPV"),
+                                            "-", 
+                                            posts_content, 
+                                            "-",
+                                            techniques_used)
+```
+
+## 1.2 What Techniques were selected?
+
+```{r}
+
+
+#### What Techniques were selected?
+map <- c("1"	= "Discrediting Opponents", "2"	= "Emotional Language use", "3"	= "Increasing Polarisation between groups", "4"	= "Impersonating people through Fake Accounts", "5"	= "Spreading Conspiracy Theories", "6"	= "Evoking negative feelings through Trolling", "88" = "Don't know")
+
+compute_techniques_selected_table <- function(post_number = 1){
+  split_techniques <- str_split(baseline_data[,paste0("detect_misinfo_", post_number,"_2")], " ")
+  split_techniques_labelled <- lapply(split_techniques, function(i) unname(map[i]))
+  n_responses <- sum(sapply(split_techniques, function(i) !any(is.na(i))))
+  table_temp <- table(unlist(split_techniques_labelled))
+  tbl <- sort(table_temp, decreasing = T)
+  res <- cbind(tbl,sort(round(tbl/n_responses*100,2), decreasing = T))
+  colnames(res) <- c('Count','Percentage')
+  return(res)
+  }
+techniques_used_table <- lapply(1:12, function(i) compute_techniques_selected_table(post_number = i))
+names(techniques_used_table) <- paste(ifelse(manipulativeness_coding, "Manipulative", "Non-Manipulative"), 
+                                      "-",
+                                      ifelse(hpv_specific, "HPV-Specific", "Non-HPV"),
+                                      "-", 
+                                      techniques_used)
+
+
+###### What combinations of techniques were selected?
+compute_techniques_multiselected_table <- function(post_number = 1){
+  
+  data_temp <- baseline_data[,paste0("detect_misinfo_", post_number,"_2")]
+  data_temp <- str_replace(data_temp, "1", "Discrediting,")
+  data_temp <- str_replace(data_temp, "2", "Emotional,")
+  data_temp <- str_replace(data_temp, "3", "Polarisation,")
+  data_temp <- str_replace(data_temp, "4", "Impersonating,")
+  data_temp <- str_replace(data_temp, "5", "Conspiracy,")
+  data_temp <- str_replace(data_temp, "6", "Trolling,")
+
+  n_responses <- sum(!is.na(data_temp))
+  table_temp <- table(data_temp)
+  tbl <- sort(table_temp, decreasing = T)
+  res <- cbind(tbl,sort(round(tbl/n_responses*100,2), decreasing = T))
+  colnames(res) <- c('Count','Percentage')
+  return(res)
+  }
+techniques_used_table_multi <- lapply(1:12, function(i) compute_techniques_multiselected_table(post_number = i))
+names(techniques_used_table_multi) <- paste(ifelse(manipulativeness_coding, "Manipulative", "Non-Manipulative"), 
+                                      "-",
+                                      ifelse(hpv_specific, "HPV-Specific", "Non-HPV"),
+                                      "-", 
+                                      techniques_used)
+
+
+
+# Create Ground Truth List and Data.frame to analyse
+ground_truth <- techniques_used_num
+data_temp <- baseline_data[,c("final_ID", paste0("detect_misinfo_", 1:12,"_2"))]
+
+calculate_confusion_matrix <- function(response, ground_truth) {
+  id_storage <- response$final_ID
+  response <- response[,-1]
+  techniques <- as.character(1:6)
+  confusion_matrix <- data.frame(Technique = techniques, FP = 0, TP = 0, FN = 0, TN = 0)
+  
+  for (technique in techniques) {
+    is_true <- unlist(lapply(ground_truth, function(i) any(str_detect(i, technique))))
+    is_true[is.na(is_true)] <- FALSE
+    is_predicted <- str_detect(technique, unlist(response))
+    is_predicted[is.na(is_predicted)] <- FALSE
+    
+    confusion_matrix$TP[confusion_matrix$Technique == technique] <- sum(is_true & is_predicted)
+    confusion_matrix$FP[confusion_matrix$Technique == technique] <- sum(!is_true & is_predicted)
+    confusion_matrix$FN[confusion_matrix$Technique == technique] <- sum(is_true & !is_predicted)
+    confusion_matrix$TN[confusion_matrix$Technique == technique] <- sum(!is_true & !is_predicted)
+    }
+  
+  confusion_matrix$FPR <- confusion_matrix$FP / (confusion_matrix$FP + confusion_matrix$TN)
+  confusion_matrix$TPR <- confusion_matrix$TP / (confusion_matrix$TP + confusion_matrix$FN)
+  confusion_matrix$FNR <- confusion_matrix$FN / (confusion_matrix$TP + confusion_matrix$FN)
+  confusion_matrix$TNR <- confusion_matrix$TN / (confusion_matrix$TN + confusion_matrix$FP)
+  
+  confusion_matrix <- confusion_matrix %>% 
+    dplyr::select(Technique, FPR, TPR, FNR, TNR)
+  confusion_matrix$final_ID <- id_storage
+  return(confusion_matrix)
+}
+
+
+# Apply the function to each row and each ground truth, assuming 'ID' is a column in your df
+results <- lapply(1:nrow(data_temp), function(i) { calculate_confusion_matrix(data_temp[i,], ground_truth) })
+final_df <- do.call(rbind, results) %>% rename(False_Positive_Rate = FPR, True_Positive_Rate = TPR, False_Negative_Rate = FNR, True_Negative_Rate = TNR)
+
+
+final_df %>% group_by(Technique) %>% summarise(FPR = paste0(round(mean(False_Positive_Rate)*100, 2), "%"),
+                                               TPR = paste0(round(mean(True_Positive_Rate)*100, 2), "%"),
+                                               FNR = paste0(round(mean(False_Negative_Rate)*100, 2), "%"),
+                                               TNR = paste0(round(mean(True_Negative_Rate)*100, 2), "%"))
+
+```
+
+## 1.3 How confident are people in their choices of techniques?
+
+```{r}
+
+temp <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_3"))] 
+
+############### FOR MANIPULATIVE POSTS VS. NON-MANIPULATIVE POSTS
+# Average Confidence by Treatment Group for the Correctly Identified Manipulative Posts
+avg_conf <- cbind(rowMeans(temp[,-c(1,2)][,manipulativeness_coding], na.rm = T),
+      rowMeans(temp[,-c(1,2)][,!manipulativeness_coding], na.rm = T)) %>% 
+  data.frame() 
+avg_conf_treatgroups <- cbind(cluster_treatment_group = temp$cluster_treatment_group, avg_conf) %>% 
+  rename(mean_conf_manip = X1, mean_conf_non_manip = X2)
+
+# Look at results
+avg_conf_treatgroups %>% 
+  group_by(cluster_treatment_group) %>% 
+  summarise(mean_conf_manip = mean(mean_conf_manip, na.rm = T),
+            mean_conf_non_manip = mean(mean_conf_non_manip, na.rm = T))
+
+# T.test
+# Overall difference between manipulative posts and non-manipulative posts?
+t.test(avg_conf_treatgroups$mean_conf_manip, avg_conf_treatgroups$mean_conf_non_manip)
+
+
+################# Is there any difference in average confidence by treatment group?
+# Difference by Treatment Group?
+temp1 <- avg_conf_treatgroups %>% pivot_longer(cols = mean_conf_manip:mean_conf_non_manip, names_to = "manipulativeness", values_to = "mean_confidence")
+TukeyHSD(aov(temp1$mean_confidence ~ temp1$cluster_treatment_group))
+
+
+################# Are people more confident if they got the techniques completely right, got all of them + false positives, got at least 1 of them correct
+
+# Only look at the manipulative data
+data_techniques_selected_manipulative_only <- baseline_data[,c("final_ID", paste0("detect_misinfo_", 1:12,"_2"))][,-1][,manipulativeness_coding]
+data_confidence_manipulative_only <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_3"))][,-c(1,2)][,manipulativeness_coding]
+
+
+compareNA <- function(v1,v2) {
+    # This function returns TRUE wherever elements are the same, including NA's,
+    # and false everywhere else.
+    same <- (v1 == v2)  |  (is.na(v1) & is.na(v2))
+    same[is.na(same)] <- FALSE
+    return(same)
+   }
+
+techniques_used_num <- list("1" = c("5 2"),
+                        "2" = c("2 5"),
+                        "3" = c("2 4 5"),
+                        "4" = c("6"), 
+                        "6" = c("1 2 4 5"),
+                        "9" = c("2 3 4"),
+                        "11" = c("1"))
+
+# which ones were completely correct?
+complete_correct_techniques <- t(apply(data_techniques_selected_manipulative_only, MARGIN = 1, FUN = function(i) compareNA(i, unlist(techniques_used_num))))
+
+# Are the assessments that were completely correct more confidently made?
+t.test(data_confidence_manipulative_only[complete_correct_techniques], data_confidence_manipulative_only[!complete_correct_techniques]) #### YES they are more confident (but only by 2%)
+
+# Does confidence for the completely correct assessments differ by treatment group?
+data_confidence_manipulative_only_ids_groups <- cbind(baseline_data[,c("final_ID", "cluster_treatment_group")], data_confidence_manipulative_only) # Add cluster treatment group and ID to this dataset
+data_confidence_manipulative_only_ids_groups[,-c(1,2)][!complete_correct_techniques] <- NA
+temp <- data_confidence_manipulative_only_ids_groups %>%
+  rowwise() %>% mutate(mean_confidence = mean(c_across(starts_with("detect_misinfo")), na.rm = TRUE)) %>% ungroup()
+TukeyHSD(aov(temp$mean_confidence ~ temp$cluster_treatment_group))
+  
+# Does confidence for the not completely correct assessments differ by treatment group?
+data_confidence_manipulative_only_ids_groups <- cbind(baseline_data[,c("final_ID", "cluster_treatment_group")], data_confidence_manipulative_only) # Add cluster treatment group and ID to this dataset
+data_confidence_manipulative_only_ids_groups[,-c(1,2)][complete_correct_techniques] <- NA
+temp <- data_confidence_manipulative_only_ids_groups %>% 
+  rowwise() %>% mutate(mean_confidence = mean(c_across(starts_with("detect_misinfo")), na.rm = TRUE)) %>% ungroup()
+TukeyHSD(aov(temp$mean_confidence ~ temp$cluster_treatment_group))
+
+```
+
+## 1.4 Sharing Propensity
+
+```{r}
+
+# Prep Data
+sharing_propensity <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_4"))] %>% 
+  pivot_longer(detect_misinfo_1_4:detect_misinfo_12_4, names_to = "post_number", values_to = "sharing_propensity") %>% 
+  mutate(post_number = str_extract(post_number, "[0-9]{1,2}"))
+
+
+# Prep data for how a post was perceived
+sharing_propensity <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_1"))] %>% 
+  pivot_longer(detect_misinfo_1_1:detect_misinfo_12_1, names_to = "post_number", values_to = "manipulativeness_perception") %>% 
+  mutate(post_number = str_extract(post_number, "[0-9]{1,2}")) %>% 
+  mutate(manipulativeness_perception = ifelse(manipulativeness_perception == 1, TRUE, FALSE)) %>% 
+  merge(sharing_propensity)
+
+# Prep data for how a post was actually manipulative or not
+sharing_propensity$manipulativeness_actual <- manipulativeness_coding[sharing_propensity$post_number]
+
+# Prep data for techniques present and identified
+
+```
+
+
+```{r}
+
+# 1. Avg. sharing intentions ➡️ for Online, Offline & Online_Offline 
+TukeyHSD(aov(sharing_propensity ~ cluster_treatment_group, data = sharing_propensity))
+sharing_propensity %>% group_by(cluster_treatment_group) %>% summarise(mean_sharing_propensity = mean(sharing_propensity, na.rm = T))
+
+# 2. Avg. sharing intentions for actual manipulative posts ⬇️ for Online, Offline & Online_Offline
+TukeyHSD(aov(sharing_propensity ~ cluster_treatment_group, 
+             data = sharing_propensity %>% filter(post_number %in% manipulative_posts)))
+# 3. Avg. sharing intentions for actual non-manipulative posts ➡️ for Online, Offline & Online_Offline
+TukeyHSD(aov(sharing_propensity ~ cluster_treatment_group, 
+             data = sharing_propensity %>% filter(post_number %in% non_manipulative_posts)))
+
+# 4. Avg. sharing intentions for perceived manipulative posts ⬇️ for Online, Offline & Online_Offline
+TukeyHSD(aov(sharing_propensity ~ cluster_treatment_group, 
+             data = sharing_propensity %>% filter(manipulativeness_perception == TRUE)))
+
+# 5. Avg. sharing intentions for correctly perceived manipulative posts ⬇️ for Online, Offline & Online_Offline
+TukeyHSD(aov(sharing_propensity ~ cluster_treatment_group, 
+             data = sharing_propensity %>% filter(manipulativeness_perception == TRUE & manipulativeness_actual == TRUE)))
+
+# 6. Avg. sharing intentions for falsely perceived manipulative posts ⬇️ for Online, Offline & Online_Offline
+TukeyHSD(aov(sharing_propensity ~ cluster_treatment_group, 
+             data = sharing_propensity %>% filter(manipulativeness_perception == FALSE & manipulativeness_actual == TRUE)))
+
+# 7. Avg. sharing intentions for correctly perceived non-manipulative posts ➡️ for Online, Offline & Online_Offline
+TukeyHSD(aov(sharing_propensity ~ cluster_treatment_group, 
+             data = sharing_propensity %>% filter(manipulativeness_perception == FALSE & manipulativeness_actual == FALSE)))
+
+# 8. Avg. sharing intentions for falsely perceived non-manipulative posts ➡️ for Online, Offline & Online_Offline
+TukeyHSD(aov(sharing_propensity ~ cluster_treatment_group, 
+             data = sharing_propensity %>% filter(manipulativeness_perception == TRUE & manipulativeness_actual == FALSE)))
+
+# 9. Avg. sharing intentions for manipulative posts where 50%+ techniques were correctly identified ⬇️ for Online, Offline & Online_Offline 
+# 10. Avg. sharing intentions for manipulative posts where less than 50%+ techniques were correctly identified ⬇️ for Online, Offline & Online_Offline 
+
+# 11. Avg. sharing intention for manipulative posts where technique X is present ⬇️ for Online, Offline & Online_Offline
+# 12. Avg. sharing intention for manipulative posts where technique X is present but was not identified ➡️ for Online, Offline & Online_Offline
+# 13. Avg. sharing intention for manipulative posts where technique X is present, which was identified ➡️ for Online, Offline & Online_Offline
+# 14. Avg. sharing intention for manipulative posts where technique X is perceived ⬇️ for Online, Offline & Online_Offline
+# 15. Avg. sharing intention for manipulative posts where technique X is perceived but was not present ➡️ for Online, Offline & Online_Offline
+# 16. Avg. sharing intention for manipulative posts where technique X is perceived, which was present ➡️ for Online, Offline & Online_Offline
+
+
+```
+
+# 2. Discernment
+
+
+```{r}
+
+truth_discernment <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("truth_discernment_", 1:16))]
+
+
+# Coding the responses as correct or incorrect
+headlines_base_order <- c("Girls vaccinated against HPV will not get their menstrual cycles during their lifetime.",
+ "The HPV vaccine exposes your child to cancer.",
+ "If adolescent girls take the vaccine, they will not be able to have children",
+ "HPV vaccine is part of a mass sterilisation program run by the government.",
+ "Certain types of HPV can cause genital warts and cervical and penile cancer",
+ "9 women die in Kenya every day due to cervical cancer ",
+ "There exists plenty of scientific evidence that the HPV vaccine is safe and effective, protecting against cervical cancer",
+ "The HPV vaccine does not cause infertility",
+ "Wearing masks, maintaining social distancing and washing your hands is ineffective and doesn’t protect COVID-19 at all.",
+ "Secondary education in Kenya is only available for children between the ages of 12 and 18.",
+ "The eye scan by World coin is linked to the Illumati",
+ "Microwaves cause cancer by converting the nutrients of food into cancer-causing agents.",
+ "The leading causes of death in Africa are communicable diseases, mainly lower respiratory tract infections, diarrhoeal diseases, HIV/Aids, malaria and tuberculosis.",
+"Safaricom is the largest telecommunications provider in Kenya. ",
+"Nairobi is home to the largest slum in Africa.",
+"Kenya is a member of the East African Community.")
+
+true_false_coding <- c("1" = F, "2" = F,  "3" = F, "4" = F, "5" = T, "6" = T, "7" = T, "8" = T, "9" = F, "10" = F, "11" = F, "12" = F, "13" = T, "14" = T, "15" = T, "16" = T)
+
+hpv_specific <- c("1" = T, "2" = T,  "3" = T, "4" = T, "5" = T, "6" = T, "7" = T, "8" = T, "9" = F, "10" = F, "11" = F, "12" = F, "13" = F, "14" = F, "15" = F, "16" = F)
+
+truth_discernment_clean <- truth_discernment %>% 
+  pivot_longer(truth_discernment_1:truth_discernment_16, names_to = "post_number", values_to = "truthfulness_rating") %>% 
+  mutate(post_number = str_extract(post_number, "[0-9]{1,2}")) %>% 
+  mutate(true_false = true_false_coding[post_number])
+
+```
+
+## 1. Descriptives
+
+```{r}
+
+truth_discernment_descriptive <- lapply(colnames(truth_discernment)[-c(1,2)], function(i) tblFun(truth_discernment[,i]))
+names(truth_discernment_descriptive) <- paste(true_false_coding, "-", headlines_base_order)
+
+# HPV Specific - Overall Stats for True and untrue posts
+tblFun(unlist(truth_discernment[,-c(1:2)][,hpv_specific & true_false_coding]))
+tblFun(unlist(truth_discernment[,-c(1:2)][,hpv_specific & !true_false_coding]))
+
+# Non-HPV - Overall Stats for True and untrue posts
+tblFun(unlist(truth_discernment[,-c(1:2)][,!hpv_specific & true_false_coding]))
+tblFun(unlist(truth_discernment[,-c(1:2)][,!hpv_specific & !true_false_coding]))
+
+# Overall Stats for True and untrue posts
+tblFun(unlist(truth_discernment[,-c(1:2)][,true_false_coding]))
+tblFun(unlist(truth_discernment[,-c(1:2)][,!true_false_coding]))
+
+```
+
+## 2. Analysis
+
+```{r}
+
+# Compute the AUC
+compute_auc <- function(truth_discernment = truth_discernment, true_false_coding = true_false_coding){
+  # Iterate through each participant, compute hit-rate and false alarm rate at each decision-threshold --> compute AUC
+  auc_all <- NULL
+  for(i in 1:nrow(truth_discernment)){
+
+    hit_rate_all_thresholds <- NULL
+    false_alarm_rate_all_thresholds <- NULL
+    
+    for(threshold in 1:5){
+      
+      # Given a threshold, how did people perceive the post (true/false)
+      perceived_binary_coded <- ifelse(truth_discernment[i,] > threshold, "Perceived_True", "Perceived_False")
+      
+      # Code the hit rate and false alarm rate
+      hit_rate <- sum(ifelse(perceived_binary_coded == "Perceived_False" & true_false_coding == FALSE, 1, 0), na.rm = T)/(ncol(truth_discernment)/2)
+      false_alarm_rate <- sum(ifelse(perceived_binary_coded == "Perceived_False" & true_false_coding == TRUE, 1, 0), na.rm = T)/(ncol(truth_discernment)/2)
+      
+      # Add hit rate and false alarm rate to vector storing them for all thresholds
+      hit_rate_all_thresholds <- c(hit_rate_all_thresholds, hit_rate)
+      false_alarm_rate_all_thresholds <- c(false_alarm_rate_all_thresholds, false_alarm_rate)
+      
+    }
+    # Compute AUC and add to vector
+    if(length(unique(c(false_alarm_rate_all_thresholds, hit_rate_all_thresholds))) < 4){
+      auc_temp <- NA
+    } else{
+      auc_temp <- AUC(false_alarm_rate_all_thresholds, hit_rate_all_thresholds)
+    }
+    auc_all <- c(auc_all, auc_temp)
+    
+  }
+  return(auc_all)
+}
+
+```
+
+```{r, warning=FALSE}
+
+# Convert 88 and 99 to NA
+truth_discernment <- truth_discernment %>% 
+  replace_with_na_all(condition = ~.x %in% c(88, 99))
+
+# Compute AUC
+truth_discernment$auc <- compute_auc(truth_discernment[,-c(1,2)], true_false_coding)
+
+# Plot AUC Overall
+hist(truth_discernment$auc)
+
+###################################
+
+# Is there an overall effect?
+TukeyHSD(aov(auc ~ cluster_treatment_group, data = truth_discernment))
+truth_discernment %>% group_by(cluster_treatment_group) %>% summarise(mean_auc = mean(auc, na.rm = T))
+
+# Is there a HPV specific effect
+truth_discernment$auc_hpv_only <- compute_auc(truth_discernment[,paste0("truth_discernment_", 1:8)], true_false_coding[1:8])
+TukeyHSD(aov(auc_hpv_only ~ cluster_treatment_group, data = truth_discernment))
+
+# Is there an effect for Non-HPV
+truth_discernment$auc_non_hpv <- compute_auc(truth_discernment[,paste0("truth_discernment_", 9:16)], true_false_coding[9:16])
+TukeyHSD(aov(auc_non_hpv ~ cluster_treatment_group, data = truth_discernment))
+
+# Is there an effect for the infertility myth
+TukeyHSD(aov(truth_discernment_3 ~ cluster_treatment_group, data = truth_discernment))
+TukeyHSD(aov(truth_discernment_3 == 5 ~ cluster_treatment_group, data = truth_discernment)) # Do people move away from the extremes?
+
+# Do people move away from extremes (1-5)?
+truth_discernment$extremes_count <- rowSums(sapply(truth_discernment[,paste0("truth_discernment_", 1:16)], function(i) i %in% c(1,5)))
+TukeyHSD(aov(extremes_count ~ cluster_treatment_group, data = truth_discernment))
+
+```
+
+# 3. Source Credibility
+
+```{r}
+
+sources_order <- c("The Daily Nation", "Other Caregivers", "Akothee", "Your Hairdresser", "Doctors", "Ministry of Health (MOH)")
+source_cred <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("source_cred_", 1:6))]
+
+# Descriptive - Hist
+source_cred_descriptive <- lapply(colnames(source_cred)[-c(1,2)], function(i) hist(source_cred[,i], main = sources_order[as.numeric(substr(i, start = nchar(i), stop = nchar(i)))]))
+names(source_cred_descriptive) <- sources_order
+
+# Descriptive - Summary Stats
+source_cred_descriptive_stats <- lapply(colnames(source_cred)[-c(1,2)], function(i) summary(source_cred[,i]))
+names(source_cred_descriptive_stats) <- sources_order
+
+############## Additional Questions
+
+# Do hairdressers enjoy more credibility than other hairdressers
+t.test(source_cred$source_cred_4, source_cred$source_cred_2)
+t.test(source_cred$source_cred_4, source_cred$source_cred_1)
+```
+
+```{r}
+# 1. Caregivers ⬆️ for Online & Online_Offline
+TukeyHSD(aov(source_cred_2 ~ cluster_treatment_group, data = source_cred))
+source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_2, na.rm = T))
+
+# 1. Doctors ⬆️ for Online & Online_Offline
+TukeyHSD(aov(source_cred_5 ~ cluster_treatment_group, data = source_cred))
+source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_5, na.rm = T))
+
+# 2. Hairdressers ⬆️ for Offline & Online_Offline
+TukeyHSD(aov(source_cred_4 ~ cluster_treatment_group, data = source_cred))
+source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_4, na.rm = T))
+
+# 3. Akothee ⬇️ for Online, Offline & Online_Offline
+TukeyHSD(aov(source_cred_3 ~ cluster_treatment_group, data = source_cred))
+source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_4, na.rm = T))
+
+```
+
+# 4. Vaccine Community Experiences
+
+```{r}
+
+# vax_hes_1: Do leaders (religious or political leaders, teachers, health care workers) in your community support vaccinations for infants and children?
+vax_comm_exp <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("vax_hes_1"))]
+
+# Convert 88 to NA
+vax_comm_exp$vax_hes_1[vax_comm_exp$vax_hes_1 %in% c(88,99)] <- NA
+
+# 1. Descriptive Stats by treatment group (frequency tables)
+tblFun(vax_comm_exp$vax_hes_1)
+tblFun_II(vax_comm_exp$vax_hes_1, vax_comm_exp$cluster_treatment_group)
+
+# 2. Test the difference
+TukeyHSD(aov(vax_hes_1 ~ cluster_treatment_group, data = vax_comm_exp))
+
+```
+
+# 5. Vaccine Attitudes
+
+```{r}
+
+vax_attitudes <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("vax_hes_", 2:9))]
+
+# Convert 88 and 99 to NA
+vax_attitudes <- vax_attitudes %>% 
+  replace_with_na_all(condition = ~.x %in% c(88, 99))
+
+```
+
+```{r}
+
+vax_hes_likert_qs <- c("Childhood vaccines are effective", "Having my child vaccinated is important for the health of others in my community", "New vaccines carry more risks than older vaccines", "The information I receive about vaccines from the vaccine program is reliable and trustworthy", "Getting vaccines is a good way to protect my child from disease.", "Generally I do what my doctor or health care provider recommends about vaccines for my child", "I am concerned about serious adverse effects of vaccines", "My child does not need vaccines for diseases that are not common anymore")
+
+vax_attitudes_descriptive <- lapply(colnames(vax_attitudes)[-c(1,2)], function(i) tblFun(vax_attitudes[,i]))
+names(vax_attitudes_descriptive) <- vax_hes_likert_qs
+
+
+vax_attitudes %>% group_by(cluster_treatment_group) %>% 
+  summarise(mean_vax_hes_2 = mean(vax_hes_2, na.rm = T),
+            mean_vax_hes_3 = mean(vax_hes_3, na.rm = T),
+            mean_vax_hes_4 = mean(vax_hes_4, na.rm = T),
+            mean_vax_hes_5 = mean(vax_hes_5, na.rm = T),
+            mean_vax_hes_6 = mean(vax_hes_6, na.rm = T),
+            mean_vax_hes_7 = mean(vax_hes_7, na.rm = T),
+            mean_vax_hes_8 = mean(vax_hes_8, na.rm = T),
+            mean_vax_hes_9 = mean(vax_hes_9, na.rm = T))
+
+
+# Test Group Differences
+TukeyHSD(aov(vax_hes_2 ~ cluster_treatment_group, data = vax_attitudes))
+TukeyHSD(aov(vax_hes_3 ~ cluster_treatment_group, data = vax_attitudes))
+TukeyHSD(aov(vax_hes_4 ~ cluster_treatment_group, data = vax_attitudes))
+TukeyHSD(aov(vax_hes_5 ~ cluster_treatment_group, data = vax_attitudes))
+TukeyHSD(aov(vax_hes_6 ~ cluster_treatment_group, data = vax_attitudes))
+TukeyHSD(aov(vax_hes_7 ~ cluster_treatment_group, data = vax_attitudes))
+TukeyHSD(aov(vax_hes_8 ~ cluster_treatment_group, data = vax_attitudes))
+TukeyHSD(aov(vax_hes_9 ~ cluster_treatment_group, data = vax_attitudes))
+
+```
+
+# 6. Vaccine Behavioural Intentions
+
+## 6.1 Reported Vax Status
+
+```{r}
+
+reported_vax_status <- baseline_data[,c("final_ID", "cluster_treatment_group", "B6a_number", paste0("current_age_", 1:8), paste0("vax_beh_int_1_", 1:8), paste0("child_not_vaxxed_and_below_14_", 1:8))] %>% 
+  drop_na(any_of("child_not_vaxxed_and_below_14_1"))
+
+# Assuming reported_vax_status is your dataset
+age_long <- reported_vax_status %>%
+  pivot_longer(cols = starts_with("current_age"), names_to = "child_number", values_to = "age") %>%
+  mutate(child_number = str_extract(child_number, "\\d+")) %>% 
+  dplyr::select(final_ID, cluster_treatment_group, child_number, age)
+
+not_vaxxed_long <- reported_vax_status %>%
+  pivot_longer(cols = starts_with("child_not_vaxxed_and_below_14"), names_to = "child_number", values_to = "child_not_vaxxed_and_below_14") %>%
+  mutate(child_number = str_extract(child_number, "\\d+")) %>% 
+  dplyr::select(child_not_vaxxed_and_below_14)
+
+vax_status_long <- reported_vax_status %>%
+  pivot_longer(cols = starts_with("vax_beh_int"), names_to = "child_number", values_to = "vax_status") %>%
+  mutate(child_number = str_extract(child_number, "\\d+")) %>% 
+  dplyr::select(vax_status)
+
+# Join the datasets on child_number
+reported_vax_status_final_long <- cbind(age_long, not_vaxxed_long, vax_status_long)
+
+# Convert 88 and 99 to NA
+reported_vax_status_final_long <- reported_vax_status_final_long %>% 
+  replace_with_na_all(condition = ~.x %in% c(88, 99))
+
+```
+
+```{r}
+
+reported_vax_status_final_long %>% 
+  filter(age > 8 & age < 15) %>% 
+  summarise(mean_vax_status = mean(vax_status, na.rm = T))
+
+temp <- reported_vax_status_final_long %>% 
+  filter(age > 8 & age < 15) %>% 
+  group_by(final_ID) %>% 
+  summarise(cluster_treatment_group, mean_vax_status = mean(vax_status, na.rm = T), .groups = "drop")
+
+tblFun(temp$mean_vax_status)
+TukeyHSD(aov(mean_vax_status ~ cluster_treatment_group, data = temp))
+
+# Are those that are worse at identifying misinformation also less likely to have vaccinated their kids?
+temp1 <- merge(temp, truth_discernment[, c("final_ID", "auc", "auc_hpv_only", "auc_non_hpv", "extremes_count")], by = "final_ID")
+cor.test(temp1$mean_vax_status, temp1$auc)
+cor.test(temp1$mean_vax_status, temp1$auc_hpv_only)
+cor.test(temp1$mean_vax_status, temp1$auc_non_hpv)
+cor.test(temp1$mean_vax_status, temp1$extremes_count)
+
+```
+
+## 6.2 Behavioural Intentions
+
+```{r}
+
+vax_beh_int <- baseline_data[,c("final_ID", "cluster_treatment_group", paste0("vax_beh_int_", c(2:4,6)))] %>% 
+  drop_na() %>% 
+  pivot_longer(vax_beh_int_2:vax_beh_int_6, names_to = "q", values_to = "likert_value")
+
+# Convert 88 and 99 to NA
+vax_beh_int <- vax_beh_int %>% 
+  replace_with_na_all(condition = ~.x %in% c(88, 99))
+
+vax_beh_int$q[vax_beh_int$q == "vax_beh_int_2"] <- "Get more information about HPV vaccine?"
+vax_beh_int$q[vax_beh_int$q == "vax_beh_int_3"] <- "Consider getting the vaccine?"
+vax_beh_int$q[vax_beh_int$q == "vax_beh_int_4"] <- "Try to get the vaccine?"
+vax_beh_int$q[vax_beh_int$q == "vax_beh_int_6"] <- "Actually get the vaccine?"
+
+vax_beh_int %>% 
+  group_by(q) %>% 
+  summarise(mean_likert = mean(likert_value, na.rm = T))
+
+```
+
+
+# Ethics Qs

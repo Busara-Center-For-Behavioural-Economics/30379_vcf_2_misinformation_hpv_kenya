@@ -1,5 +1,5 @@
 ---
-title: "VCF_endline_data_Analysis"
+title: "VCF Endline Data Analysis - Controlling Baseline"
 author: "Jonathan Karl"
 date: "2024-02-22"
 output: 
@@ -16,7 +16,7 @@ rm(list = ls())
 knitr::opts_knit$set(options(scipen=999))
 
 # Install and load all the packages that will be used for analysis
-pkgs <- c("tidyverse", "purrr", "DescTools", "naniar", "ltm", "ggalluvial", "googlesheets4", "stargazer")
+pkgs <- c("tidyverse", "purrr", "DescTools", "naniar", "ltm", "ggalluvial", "googlesheets4", "stargazer", "ggsignif", "sandwich", "lmtest", "mice")
 
 miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
 if(length(miss_pkgs)>0){
@@ -34,7 +34,7 @@ rm(miss_pkgs, pkgs)
 
 ## Table with relative frequencies
 tblFun <- function(x){
-  tbl <- sort(table(x), decreasing = T)
+  tbl <- sort(table(x, useNA = "always"), decreasing = T)
   res <- cbind(tbl,sort(round(prop.table(tbl)*100,2), decreasing = T))
   colnames(res) <- c('Count','Percentage')
   res
@@ -44,6 +44,15 @@ tblFun_II <- function(x, y){
   tbl <- table(x, y)
   res <- apply(tbl, MARGIN = 2, FUN = function(x) round(prop.table(x)*100,2))
   res
+}
+
+
+lm_clustered_summary <- function(m = NULL){
+  model <- m
+  cluster_se <- vcovCL(model, cluster = ~ B0_cluster_base)
+  # Summarize the model using clustered standard errors
+  summary_clustered <- coeftest(model, vcov = cluster_se)
+  return(summary_clustered)
 }
 
 ```
@@ -61,7 +70,7 @@ endline_data <- read.csv("Data Exports/vcf2_rct_endline_caregivers_clean.csv")
 
 ```{r}
 
-baseline_endline_merged <- left_join(endline_data, baseline_data, suffix = c("_end", "_base"), by = join_by(id == final_ID))
+baseline_endline_merged <- dplyr::left_join(endline_data, baseline_data, suffix = c("_end", "_base"), by = join_by(id == final_ID))
 
 ```
 
@@ -162,7 +171,7 @@ posts_content <- list("1" = "The Govt. doesn't want you to know - The HPV Vaccin
 
 ```{r}
 # Manipulativeness Assessment
-manipulativeness_assessment <- lapply(paste0("detect_misinfo_", 1:12,"_1"), function(i) tblFun(endline_data[,i]))
+manipulativeness_assessment <- lapply(paste0("detect_misinfo_", 1:12,"_1_end"), function(i) tblFun(baseline_endline_merged[,i]))
 names(manipulativeness_assessment) <- paste(ifelse(manipulativeness_coding, "Manipulative", "Non-Manipulative"), 
                                             "-",
                                             ifelse(hpv_specific, "HPV-Specific", "Non-HPV"),
@@ -172,30 +181,70 @@ names(manipulativeness_assessment) <- paste(ifelse(manipulativeness_coding, "Man
                                             techniques_used)
 
 
-manipulativeness_df <- endline_data[,c(paste0("detect_misinfo_", 1:12,"_1"), "cluster_treatment_group")] %>% 
+manipulativeness_df <- baseline_endline_merged[,c(paste0("detect_misinfo_", 1:12,"_1_base"), paste0("detect_misinfo_", 1:12,"_1_end"), "cluster_treatment_group_base", "B0_cluster_base")] 
+  
+manipulativeness_df[,-26] <- manipulativeness_df[,-26] %>% 
   replace_with_na_all(condition = ~.x %in% c(88, 99))
 
-# Discernment Score
-manipulativeness_df$manipulativeness_assessment_score <- apply(manipulativeness_df[,1:12], MARGIN = 1, FUN = function(i) sum(i == manipulativeness_coding, na.rm = T))
+# Manipulation Detection Score
+manipulativeness_df$manipulativeness_assessment_score_1_diff <- manipulativeness_df$detect_misinfo_1_1_end - manipulativeness_df$detect_misinfo_1_1_base
+manipulativeness_df$manipulativeness_assessment_score_2_diff <- manipulativeness_df$detect_misinfo_2_1_end - manipulativeness_df$detect_misinfo_2_1_base
+manipulativeness_df$manipulativeness_assessment_score_3_diff <- manipulativeness_df$detect_misinfo_3_1_end - manipulativeness_df$detect_misinfo_3_1_base
+manipulativeness_df$manipulativeness_assessment_score_4_diff <- manipulativeness_df$detect_misinfo_4_1_end - manipulativeness_df$detect_misinfo_4_1_base
+manipulativeness_df$manipulativeness_assessment_score_5_diff <- manipulativeness_df$detect_misinfo_5_1_end - manipulativeness_df$detect_misinfo_5_1_base
+manipulativeness_df$manipulativeness_assessment_score_6_diff <- manipulativeness_df$detect_misinfo_6_1_end - manipulativeness_df$detect_misinfo_6_1_base
+manipulativeness_df$manipulativeness_assessment_score_7_diff <- manipulativeness_df$detect_misinfo_7_1_end - manipulativeness_df$detect_misinfo_7_1_base
+manipulativeness_df$manipulativeness_assessment_score_8_diff <- manipulativeness_df$detect_misinfo_8_1_end - manipulativeness_df$detect_misinfo_8_1_base
+manipulativeness_df$manipulativeness_assessment_score_9_diff <- manipulativeness_df$detect_misinfo_9_1_end - manipulativeness_df$detect_misinfo_9_1_base
+manipulativeness_df$manipulativeness_assessment_score_10_diff <- manipulativeness_df$detect_misinfo_10_1_end - manipulativeness_df$detect_misinfo_10_1_base
+manipulativeness_df$manipulativeness_assessment_score_11_diff <- manipulativeness_df$detect_misinfo_11_1_end - manipulativeness_df$detect_misinfo_11_1_base
+manipulativeness_df$manipulativeness_assessment_score_12_diff <- manipulativeness_df$detect_misinfo_12_1_end - manipulativeness_df$detect_misinfo_12_1_base
+
+manipulativeness_df$manipulativeness_assessment_score_base <- apply(manipulativeness_df[,1:12], MARGIN = 1, FUN = function(i) sum(i == manipulativeness_coding, na.rm = T))
+manipulativeness_df$manipulativeness_assessment_score_end <- apply(manipulativeness_df[,13:24], MARGIN = 1, FUN = function(i) sum(i == manipulativeness_coding, na.rm = T))
+manipulativeness_df$manipulativeness_assessment_score_diff <- apply(manipulativeness_df[,29:40], MARGIN = 1, FUN = function(i) sum(i == manipulativeness_coding, na.rm = T))
+
+
 
 # Test Manipulativeness Effect
-summary(lm(manipulativeness_assessment_score ~ cluster_treatment_group, data = manipulativeness_df))
-manipulativeness_df %>% group_by(cluster_treatment_group) %>% summarise(mean_manipulativeness_assessment_score = mean(manipulativeness_assessment_score, na.rm = T))
+model <- lm(manipulativeness_assessment_score_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+lm_clustered_summary(model)
+manipulativeness_df %>% group_by(cluster_treatment_group_base) %>% dplyr::summarise(mean_manipulativeness_assessment_score_diff = mean(manipulativeness_assessment_score_diff, na.rm = T)/12)
 
 
 # Single Effects
-summary(lm(detect_misinfo_1_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_2_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_3_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_4_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_5_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_6_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_7_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_8_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_9_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_10_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_11_1 ~ cluster_treatment_group, data = manipulativeness_df))
-summary(lm(detect_misinfo_12_1 ~ cluster_treatment_group, data = manipulativeness_df))
+m1 <- lm(manipulativeness_assessment_score_1_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m2 <- lm(manipulativeness_assessment_score_2_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m3 <- lm(manipulativeness_assessment_score_3_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m4 <- lm(manipulativeness_assessment_score_4_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m5 <- lm(manipulativeness_assessment_score_5_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m6 <- lm(manipulativeness_assessment_score_6_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m7 <- lm(manipulativeness_assessment_score_7_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m8 <- lm(manipulativeness_assessment_score_8_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m9 <- lm(manipulativeness_assessment_score_9_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m10 <- lm(manipulativeness_assessment_score_10_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m11 <- lm(manipulativeness_assessment_score_11_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+m12 <- lm(manipulativeness_assessment_score_12_diff ~ cluster_treatment_group_base, data = manipulativeness_df)
+
+
+# Test Group Differences
+manipulativeness_detection_differences_lm <- list(lm_clustered_summary(m1),
+                                                  lm_clustered_summary(m2),
+                                                  lm_clustered_summary(m3),
+                                                  lm_clustered_summary(m4),
+                                                  lm_clustered_summary(m5),
+                                                  lm_clustered_summary(m6),
+                                                  lm_clustered_summary(m7),
+                                                  lm_clustered_summary(m8),
+                                                  lm_clustered_summary(m9),
+                                                  lm_clustered_summary(m10),
+                                                  lm_clustered_summary(m11),
+                                                  lm_clustered_summary(m12))
+
+names(manipulativeness_detection_differences_lm) <- posts_content
+manipulativeness_detection_differences_lm
+
+
 
 ```
 
@@ -301,21 +350,35 @@ final_df %>% group_by(Technique) %>% summarise(FPR = paste0(round(mean(False_Pos
 
 ```{r}
 
-temp <- endline_data[,c("id", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_3"))] 
+manipulation_confidence_df <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", paste0("detect_misinfo_", 1:12,"_3_base"), paste0("detect_misinfo_", 1:12,"_3_end"))] 
+
+manipulation_confidence_df$detect_misinfo_1_3_diff <- manipulation_confidence_df$detect_misinfo_1_3_end - manipulation_confidence_df$detect_misinfo_1_3_end
+manipulation_confidence_df$detect_misinfo_2_3_diff <- manipulation_confidence_df$detect_misinfo_2_3_end - manipulation_confidence_df$detect_misinfo_2_3_end
+manipulation_confidence_df$detect_misinfo_3_3_diff <- manipulation_confidence_df$detect_misinfo_3_3_end - manipulation_confidence_df$detect_misinfo_3_3_end
+manipulation_confidence_df$detect_misinfo_4_3_diff <- manipulation_confidence_df$detect_misinfo_4_3_end - manipulation_confidence_df$detect_misinfo_4_3_end
+manipulation_confidence_df$detect_misinfo_5_3_diff <- manipulation_confidence_df$detect_misinfo_5_3_end - manipulation_confidence_df$detect_misinfo_5_3_end
+manipulation_confidence_df$detect_misinfo_6_3_diff <- manipulation_confidence_df$detect_misinfo_6_3_end - manipulation_confidence_df$detect_misinfo_6_3_end
+manipulation_confidence_df$detect_misinfo_7_3_diff <- manipulation_confidence_df$detect_misinfo_7_3_end - manipulation_confidence_df$detect_misinfo_7_3_end
+manipulation_confidence_df$detect_misinfo_8_3_diff <- manipulation_confidence_df$detect_misinfo_8_3_end - manipulation_confidence_df$detect_misinfo_8_3_end
+manipulation_confidence_df$detect_misinfo_9_3_diff <- manipulation_confidence_df$detect_misinfo_9_3_end - manipulation_confidence_df$detect_misinfo_9_3_end
+manipulation_confidence_df$detect_misinfo_10_3_diff <- manipulation_confidence_df$detect_misinfo_10_3_end - manipulation_confidence_df$detect_misinfo_10_3_end
+manipulation_confidence_df$detect_misinfo_11_3_diff <- manipulation_confidence_df$detect_misinfo_11_3_end - manipulation_confidence_df$detect_misinfo_11_3_end
+manipulation_confidence_df$detect_misinfo_12_3_diff <- manipulation_confidence_df$detect_misinfo_12_3_end - manipulation_confidence_df$detect_misinfo_12_3_end
+
 
 ############### FOR MANIPULATIVE POSTS VS. NON-MANIPULATIVE POSTS
 # Average Confidence by Treatment Group for the Correctly Identified Manipulative Posts
-avg_conf <- cbind(rowMeans(temp[,-c(1,2)][,manipulativeness_coding], na.rm = T),
-      rowMeans(temp[,-c(1,2)][,!manipulativeness_coding], na.rm = T)) %>% 
+avg_conf <- cbind(rowMeans(manipulation_confidence_df[,paste0("detect_misinfo_", 1:12, "_3_end")][,manipulativeness_coding], na.rm = T),
+                  rowMeans(manipulation_confidence_df[,paste0("detect_misinfo_", 1:12, "_3_end")][,!manipulativeness_coding], na.rm = T)) %>%
   data.frame() 
-avg_conf_treatgroups <- cbind(cluster_treatment_group = temp$cluster_treatment_group, avg_conf) %>% 
+
+avg_conf_treatgroups <- cbind(cluster_treatment_group = manipulation_confidence_df$cluster_treatment_group, avg_conf) %>% 
   dplyr::rename(mean_conf_manip = X1, mean_conf_non_manip = X2)
 
 # Look at results
 avg_conf_treatgroups %>% 
   group_by(cluster_treatment_group) %>% 
-  summarise(mean_conf_manip = mean(mean_conf_manip, na.rm = T),
-            mean_conf_non_manip = mean(mean_conf_non_manip, na.rm = T))
+  summarise(mean_conf_manip = mean(mean_conf_manip, na.rm = T), mean_conf_non_manip = mean(mean_conf_non_manip, na.rm = T))
 
 # T.test
 # Overall difference between manipulative posts and non-manipulative posts?
@@ -324,15 +387,15 @@ t.test(avg_conf_treatgroups$mean_conf_manip, avg_conf_treatgroups$mean_conf_non_
 
 ################# Is there any difference in average confidence by treatment group?
 # Difference by Treatment Group?
-temp1 <- avg_conf_treatgroups %>% pivot_longer(cols = mean_conf_manip:mean_conf_non_manip, names_to = "manipulativeness", values_to = "mean_confidence")
-summary(lm(temp1$mean_confidence ~ temp1$cluster_treatment_group))
-
+manipulation_confidence_df$mean_confidence_end <- rowMeans(manipulation_confidence_df %>% dplyr::select(ends_with("end")), na.rm = T)
+model <- lm(mean_confidence_end ~ cluster_treatment_group_base, data = manipulation_confidence_df)
+lm_clustered_summary(model)
 
 ################# Are people more confident if they got the techniques completely right, got all of them + false positives, got at least 1 of them correct
 
 # Only look at the manipulative data
-data_techniques_selected_manipulative_only <- endline_data[,c("id", paste0("detect_misinfo_", 1:12,"_2"))][,-1][,manipulativeness_coding]
-data_confidence_manipulative_only <- endline_data[,c("id", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_3"))][,-c(1,2)][,manipulativeness_coding]
+data_techniques_selected_manipulative_only <- baseline_endline_merged[,paste0("detect_misinfo_", 1:12,"_2_end")][,manipulativeness_coding]
+data_confidence_manipulative_only <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", paste0("detect_misinfo_", 1:12,"_3_end"))][,-c(1,2)][,manipulativeness_coding]
 
 
 compareNA <- function(v1,v2) {
@@ -355,21 +418,23 @@ techniques_used_num <- list("1" = c("5 2"),
 complete_correct_techniques <- t(apply(data_techniques_selected_manipulative_only, MARGIN = 1, FUN = function(i) compareNA(i, unlist(techniques_used_num))))
 
 # Are the assessments that were completely correct more confidently made?
-t.test(data_confidence_manipulative_only[complete_correct_techniques], data_confidence_manipulative_only[!complete_correct_techniques]) #### YES they are more confident (but only by 2%)
+t.test(data_confidence_manipulative_only[complete_correct_techniques], data_confidence_manipulative_only[!complete_correct_techniques])
 
 # Does confidence for the completely correct assessments differ by treatment group?
-data_confidence_manipulative_only_ids_groups <- cbind(endline_data[,c("id", "cluster_treatment_group")], data_confidence_manipulative_only) # Add cluster treatment group and ID to this dataset
-data_confidence_manipulative_only_ids_groups[,-c(1,2)][!complete_correct_techniques] <- NA
+data_confidence_manipulative_only_ids_groups <- cbind(baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base")], data_confidence_manipulative_only) # Add cluster treatment group and ID to this dataset
+data_confidence_manipulative_only_ids_groups[,-c(1:3)][!complete_correct_techniques] <- NA
 temp <- data_confidence_manipulative_only_ids_groups %>%
   rowwise() %>% dplyr::mutate(mean_confidence = mean(dplyr::c_across(starts_with("detect_misinfo")), na.rm = TRUE)) %>% ungroup()
-summary(lm(temp$mean_confidence ~ temp$cluster_treatment_group))
-  
+model <- lm(mean_confidence ~ cluster_treatment_group_base, data = temp)
+lm_clustered_summary(model)
+
 # Does confidence for the not completely correct assessments differ by id group?
-data_confidence_manipulative_only_ids_groups <- cbind(endline_data[,c("id", "cluster_treatment_group")], data_confidence_manipulative_only) # Add cluster treatment group and ID to this dataset
-data_confidence_manipulative_only_ids_groups[,-c(1,2)][complete_correct_techniques] <- NA
+data_confidence_manipulative_only_ids_groups <- cbind(baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base")], data_confidence_manipulative_only) # Add cluster treatment group and ID to this dataset
+data_confidence_manipulative_only_ids_groups[,-c(1:3)][complete_correct_techniques] <- NA
 temp <- data_confidence_manipulative_only_ids_groups %>% 
   rowwise() %>% dplyr::mutate(mean_confidence = mean(c_across(starts_with("detect_misinfo")), na.rm = TRUE)) %>% ungroup()
-summary(lm(temp$mean_confidence ~ temp$cluster_treatment_group))
+model <- lm(mean_confidence ~ cluster_treatment_group_base, data = temp)
+lm_clustered_summary(model)
 
 ```
 
@@ -377,22 +442,23 @@ summary(lm(temp$mean_confidence ~ temp$cluster_treatment_group))
 
 ```{r}
 
-# Prep Data
-sharing_propensity <- endline_data[,c("id", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_4"))] %>% 
-  pivot_longer(detect_misinfo_1_4:detect_misinfo_12_4, names_to = "post_number", values_to = "sharing_propensity") %>% 
-  mutate(post_number = str_extract(post_number, "[0-9]{1,2}"))
+# Prep data
+sharing_propensity <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", paste0("detect_misinfo_", 1:12,"_4_base"), paste0("detect_misinfo_", 1:12,"_4_end"))]
 
-# Prep data for how a post was perceived
-sharing_propensity <- endline_data[,c("id", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_1"))] %>% 
-  pivot_longer(detect_misinfo_1_1:detect_misinfo_12_1, names_to = "post_number", values_to = "manipulativeness_perception") %>% 
-  mutate(post_number = str_extract(post_number, "[0-9]{1,2}")) %>% 
-  mutate(manipulativeness_perception = ifelse(manipulativeness_perception == 1, TRUE, FALSE)) %>% 
-  merge(sharing_propensity)
+# Prep variables
+sharing_propensity$detect_misinfo_1_4_diff <- sharing_propensity$detect_misinfo_1_4_end - sharing_propensity$detect_misinfo_1_4_base
+sharing_propensity$detect_misinfo_2_4_diff <- sharing_propensity$detect_misinfo_2_4_end - sharing_propensity$detect_misinfo_2_4_base
+sharing_propensity$detect_misinfo_3_4_diff <- sharing_propensity$detect_misinfo_3_4_end - sharing_propensity$detect_misinfo_3_4_base
+sharing_propensity$detect_misinfo_4_4_diff <- sharing_propensity$detect_misinfo_4_4_end - sharing_propensity$detect_misinfo_4_4_base
+sharing_propensity$detect_misinfo_5_4_diff <- sharing_propensity$detect_misinfo_5_4_end - sharing_propensity$detect_misinfo_5_4_base
+sharing_propensity$detect_misinfo_6_4_diff <- sharing_propensity$detect_misinfo_6_4_end - sharing_propensity$detect_misinfo_6_4_base
+sharing_propensity$detect_misinfo_7_4_diff <- sharing_propensity$detect_misinfo_7_4_end - sharing_propensity$detect_misinfo_7_4_base
+sharing_propensity$detect_misinfo_8_4_diff <- sharing_propensity$detect_misinfo_8_4_end - sharing_propensity$detect_misinfo_8_4_base
+sharing_propensity$detect_misinfo_9_4_diff <- sharing_propensity$detect_misinfo_9_4_end - sharing_propensity$detect_misinfo_9_4_base
+sharing_propensity$detect_misinfo_10_4_diff <- sharing_propensity$detect_misinfo_10_4_end - sharing_propensity$detect_misinfo_10_4_base
+sharing_propensity$detect_misinfo_11_4_diff <- sharing_propensity$detect_misinfo_11_4_end - sharing_propensity$detect_misinfo_11_4_base
+sharing_propensity$detect_misinfo_12_4_diff <- sharing_propensity$detect_misinfo_12_4_end - sharing_propensity$detect_misinfo_12_4_base
 
-# Prep data for how a post was actually manipulative or not
-sharing_propensity$manipulativeness_actual <- manipulativeness_coding[sharing_propensity$post_number]
-
-# Prep data for techniques present and identified
 
 ```
 
@@ -400,39 +466,60 @@ sharing_propensity$manipulativeness_actual <- manipulativeness_coding[sharing_pr
 ```{r}
 
 # 1. Avg. sharing intentions ➡️ for Online, Offline & Online_Offline 
-summary(lm(sharing_propensity ~ cluster_treatment_group, data = sharing_propensity))
-sharing_propensity %>% group_by(cluster_treatment_group) %>% summarise(mean_sharing_propensity = mean(sharing_propensity, na.rm = T))
+sharing_propensity$sharing_propensity_diff <- rowMeans(sharing_propensity[,paste0("detect_misinfo_", 1:12, "_4_diff")])
+model <- lm(sharing_propensity_diff ~ cluster_treatment_group_base, data = sharing_propensity)
+lm_clustered_summary(model)
+sharing_propensity %>% group_by(cluster_treatment_group_base) %>% dplyr::summarise(mean_sharing_propensity_diff = mean(sharing_propensity_diff, na.rm = T))
+
+###############
+
+# Prep Data for other hypotheses
+sharing_propensity_pivoted <- sharing_propensity[,c("id", "cluster_treatment_group_base", "B0_cluster_base", paste0("detect_misinfo_", 1:12,"_4_end"))] %>% 
+  pivot_longer(detect_misinfo_1_4_end:detect_misinfo_12_4_end, names_to = "post_number", values_to = "sharing_propensity_end") %>% 
+  mutate(post_number = str_extract(post_number, "[0-9]{1,2}"))
+
+# Prep data for how a post was perceived
+sharing_propensity_perception <- endline_data[,c("id", "cluster_treatment_group", paste0("detect_misinfo_", 1:12,"_1"))] %>% 
+  pivot_longer(detect_misinfo_1_1:detect_misinfo_12_1, names_to = "post_number", values_to = "manipulativeness_perception") %>% 
+  mutate(post_number = str_extract(post_number, "[0-9]{1,2}")) %>% 
+  mutate(manipulativeness_perception = ifelse(manipulativeness_perception == 1, TRUE, FALSE)) %>% 
+  merge(sharing_propensity_pivoted)
+
+# Prep data for how a post was actually manipulative or not
+sharing_propensity_perception$manipulativeness_actual <- manipulativeness_coding[sharing_propensity_perception$post_number]
+
+
 
 # 2. Avg. sharing intentions for actual manipulative posts ⬇️ for Online, Offline & Online_Offline
-summary(lm(sharing_propensity ~ cluster_treatment_group, 
-             data = sharing_propensity %>% filter(post_number %in% manipulative_posts)))
+model <- lm(sharing_propensity_end ~ cluster_treatment_group, data = sharing_propensity_perception %>% filter(post_number %in% manipulative_posts))
+lm_clustered_summary(model)
+
 # 3. Avg. sharing intentions for actual non-manipulative posts ➡️ for Online, Offline & Online_Offline
-summary(lm(sharing_propensity ~ cluster_treatment_group, 
-             data = sharing_propensity %>% filter(post_number %in% non_manipulative_posts)))
+model <- lm(sharing_propensity_end ~ cluster_treatment_group, data = sharing_propensity_perception %>% filter(post_number %in% non_manipulative_posts))
+lm_clustered_summary(model)
 
 # 4. Avg. sharing intentions for perceived manipulative posts ⬇️ for Online, Offline & Online_Offline
-summary(lm(sharing_propensity ~ cluster_treatment_group, 
-             data = sharing_propensity %>% filter(manipulativeness_perception == TRUE)))
+model <- lm(sharing_propensity_end ~ cluster_treatment_group, data = sharing_propensity_perception %>% filter(manipulativeness_perception == TRUE))
+lm_clustered_summary(model)
 
 # 5. Avg. sharing intentions for correctly perceived manipulative posts ⬇️ for Online, Offline & Online_Offline
-summary(lm(sharing_propensity ~ cluster_treatment_group, 
-             data = sharing_propensity %>% filter(manipulativeness_perception == TRUE & manipulativeness_actual == TRUE)))
+model <- lm(sharing_propensity_end ~ cluster_treatment_group, data = sharing_propensity_perception %>% filter(manipulativeness_perception == TRUE & manipulativeness_actual == TRUE))
+lm_clustered_summary(model)
 
 # 6. Avg. sharing intentions for falsely perceived manipulative posts ⬇️ for Online, Offline & Online_Offline
-summary(lm(sharing_propensity ~ cluster_treatment_group, 
-             data = sharing_propensity %>% filter(manipulativeness_perception == FALSE & manipulativeness_actual == TRUE)))
+model <- lm(sharing_propensity_end ~ cluster_treatment_group, data = sharing_propensity_perception %>% filter(manipulativeness_perception == FALSE & manipulativeness_actual == TRUE))
+lm_clustered_summary(model)
 
 # 7. Avg. sharing intentions for correctly perceived non-manipulative posts ➡️ for Online, Offline & Online_Offline
-summary(lm(sharing_propensity ~ cluster_treatment_group, 
-             data = sharing_propensity %>% filter(manipulativeness_perception == FALSE & manipulativeness_actual == FALSE)))
+model <- lm(sharing_propensity_end ~ cluster_treatment_group, data = sharing_propensity_perception %>% filter(manipulativeness_perception == FALSE & manipulativeness_actual == FALSE))
+lm_clustered_summary(model)
 
 # 8. Avg. sharing intentions for falsely perceived non-manipulative posts ➡️ for Online, Offline & Online_Offline
-summary(lm(sharing_propensity ~ cluster_treatment_group, 
-             data = sharing_propensity %>% filter(manipulativeness_perception == TRUE & manipulativeness_actual == FALSE)))
+model <- lm(sharing_propensity_end ~ cluster_treatment_group, data = sharing_propensity_perception %>% filter(manipulativeness_perception == TRUE & manipulativeness_actual == FALSE))
+lm_clustered_summary(model)
 
 # 9. Avg. sharing intentions for manipulative posts where 50%+ techniques were correctly identified ⬇️ for Online, Offline & Online_Offline 
 # 10. Avg. sharing intentions for manipulative posts where less than 50%+ techniques were correctly identified ⬇️ for Online, Offline & Online_Offline 
-
 # 11. Avg. sharing intention for manipulative posts where technique X is present ⬇️ for Online, Offline & Online_Offline
 # 12. Avg. sharing intention for manipulative posts where technique X is present but was not identified ➡️ for Online, Offline & Online_Offline
 # 13. Avg. sharing intention for manipulative posts where technique X is present, which was identified ➡️ for Online, Offline & Online_Offline
@@ -448,7 +535,9 @@ summary(lm(sharing_propensity ~ cluster_treatment_group,
 
 ```{r}
 
-truth_discernment <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", paste0(paste0("truth_discernment_", 1:16), rep(c("_base", "_end"), each = 16)))] %>% 
+truth_discernment <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", paste0(paste0("truth_discernment_", 1:16), rep(c("_base", "_end"), each = 16)))] 
+
+truth_discernment[,-3] <- truth_discernment[,-3] %>% 
   replace_with_na_all(condition = ~.x %in% c(88, 99))
 
 # Coding the responses as correct or incorrect
@@ -517,13 +606,23 @@ compute_auc <- function(truth_discernment = truth_discernment, true_false_coding
   return(auc_all)
 }
 
+
+
+############################
+
+# Myth specific differences
+question_specific_truthfulness_diff <- function(question_number = NULL){
+  truth_discernment$temp <- truth_discernment[,paste0("truth_discernment_", question_number,"_end"), drop = T] - truth_discernment[,paste0("truth_discernment_", question_number,"_base"), drop = T]
+  model <- lm(temp ~ cluster_treatment_group_base, data = truth_discernment)
+  x <- lm_clustered_summary(model)
+  truth_discernment$temp <- NULL
+  return(x)
+}
+
+
 ```
 
 ```{r, warning=FALSE}
-
-# Convert 88 and 99 to NA
-truth_discernment <- truth_discernment %>% 
-  replace_with_na_all(condition = ~.x %in% c(88, 99))
 
 # Compute AUC
 truth_discernment$auc_base <- compute_auc(truth_discernment[,-c(1,2)][,1:16], true_false_coding)
@@ -538,31 +637,52 @@ hist(truth_discernment$auc_diff)
 ###################################
 
 # Is there an overall effect?
-summary(lm(auc_diff ~ cluster_treatment_group_base, data = truth_discernment))
+model <- lm(auc_diff ~ cluster_treatment_group_base, data = truth_discernment)
+lm_clustered_summary(model)
 truth_discernment %>% group_by(cluster_treatment_group_base) %>% dplyr::summarise(mean_auc_diff = mean(auc_diff, na.rm = T))
 
 # Is there a HPV specific effect
 truth_discernment$auc_hpv_only_base <- compute_auc(truth_discernment[,paste0("truth_discernment_", 1:8, "_base")], true_false_coding[1:8])
 truth_discernment$auc_hpv_only_end <- compute_auc(truth_discernment[,paste0("truth_discernment_", 1:8, "_end")], true_false_coding[1:8])
 truth_discernment$auc_hpv_only_diff <- truth_discernment$auc_hpv_only_end - truth_discernment$auc_hpv_only_base
-summary(lm(auc_hpv_only_diff ~ cluster_treatment_group_base, data = truth_discernment))
+model <- lm(auc_hpv_only_diff ~ cluster_treatment_group_base, data = truth_discernment)
+lm_clustered_summary(model)
 
 # Is there an effect for Non-HPV
 truth_discernment$auc_non_hpv_base <- compute_auc(truth_discernment[,paste0("truth_discernment_", 9:16, "_base")], true_false_coding[9:16])
 truth_discernment$auc_non_hpv_end <- compute_auc(truth_discernment[,paste0("truth_discernment_", 9:16, "_end")], true_false_coding[9:16])
 truth_discernment$auc_non_hpv_diff <- truth_discernment$auc_non_hpv_end - truth_discernment$auc_non_hpv_base
-summary(lm(auc_non_hpv_diff ~ cluster_treatment_group_base, data = truth_discernment))
+model <- lm(auc_non_hpv_diff ~ cluster_treatment_group_base, data = truth_discernment)
+lm_clustered_summary(model)
 
-# Is there an effect for the infertility myth
-truth_discernment$truth_discernment_3_diff <- truth_discernment$truth_discernment_3_end - truth_discernment$truth_discernment_3_base
-summary(lm(truth_discernment_3_diff ~ cluster_treatment_group_base, data = truth_discernment))
+
+# Is there any Myth specific differences?
+myth_specific_ls <- list(question_specific_truthfulness_diff(1),
+question_specific_truthfulness_diff(2),
+question_specific_truthfulness_diff(3),
+question_specific_truthfulness_diff(4),
+question_specific_truthfulness_diff(5),
+question_specific_truthfulness_diff(6),
+question_specific_truthfulness_diff(7),
+question_specific_truthfulness_diff(8),
+question_specific_truthfulness_diff(9),
+question_specific_truthfulness_diff(10),
+question_specific_truthfulness_diff(11),
+question_specific_truthfulness_diff(12),
+question_specific_truthfulness_diff(13),
+question_specific_truthfulness_diff(14),
+question_specific_truthfulness_diff(15),
+question_specific_truthfulness_diff(16))
+names(myth_specific_ls) <- headlines_base_order
+myth_specific_ls
 
 # Do people move away from extremes (1-5)?
 truth_discernment$extremes_count_base <- rowSums(sapply(truth_discernment[,paste0("truth_discernment_", 1:16, "_base")], function(i) i %in% c(1,5)))
 truth_discernment$extremes_count_end <- rowSums(sapply(truth_discernment[,paste0("truth_discernment_", 1:16, "_end")], function(i) i %in% c(1,5)))
 truth_discernment$extremes_count_diff <- truth_discernment$extremes_count_end - truth_discernment$extremes_count_base
 
-summary(lm(extremes_count_diff ~ cluster_treatment_group_base, data = truth_discernment))
+model <- lm(extremes_count_diff ~ cluster_treatment_group_base, data = truth_discernment)
+lm_clustered_summary(model)
 truth_discernment %>% 
   group_by(cluster_treatment_group_base) %>% 
   dplyr::summarise(extremes_count_mean = mean(extremes_count_diff, na.rm = T))
@@ -575,44 +695,105 @@ t.test(x = truth_discernment[truth_discernment$cluster_treatment_group_base == "
 
 ```
 
+## 2.1 Plots
+
+```{r, include = FALSE, eval = FALSE}
+
+
+pwc <- pairwise.t.test(truth_discernment$auc_diff, truth_discernment$cluster_treatment_group_base, 
+                      p.adjust.method = "bonferroni",
+                      pool.sd = TRUE)
+
+
+# Convert the pairwise.t.test output into a data frame with the required columns
+pwc_df <- as.data.frame(pwc$p.value)
+y_position <- truth_discernment %>% group_by(cluster_treatment_group_base) %>% summarise(auc_diff = max(auc_diff, na.rm = T)) %>% pull(auc_diff)
+pwc_df <- pwc_df %>%
+  rownames_to_column(var = "group1") %>%
+  pivot_longer(-group1, names_to = "group2", values_to = "p.value") %>%
+  dplyr::filter(group2 == "Control") %>% 
+  drop_na() %>% 
+  mutate(p.value = round(p.value, 3)) %>% 
+  mutate(y.position = max(y_position + 0.05)) %>% 
+  add_row(group1 = "Control", group2 = "Control", p.value = 1, y.position = max(y_position) + 0.05, .before = 1)
+
+p.stars <- c("***" = 0.001, "**" = 0.01, "*" = 0.05, "NS" = 1)
+
+truth_discernment %>% 
+  ggplot(aes(x = cluster_treatment_group_base, y = auc_diff, fill = cluster_treatment_group_base)) +
+  geom_boxplot(alpha = 1) +
+  geom_signif(comparisons = list(c("Control", "Online_Only"), 
+                                 c("Control", "Offline_Only"), 
+                                 c("Control", "Online_Offline")), 
+              map_signif_level = function(p) {
+                if (p < 0.001) {
+                  return(paste0("p=", round(p,3), "***"))
+                } else if (p < 0.01) {
+                  return(paste0("p=", round(p,3),"**"))
+                } else if (p < 0.05) {
+                  return(paste0("p=", round(p,3),"*"))
+                } else {
+                  return("NS")
+                }
+              },
+              y_position = c(0.75, 0.57, 0.66)) +
+  scale_fill_manual("Treatment Group", values = c("lightgrey", "#0033A1", "#5074BF", "#B4C4E4")) +
+  ylab("AUC Difference (Baseline - Endline)") + 
+  xlab("") + 
+  labs(title = "Truth Discernment - Overall Effects") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+  
+
+```
+
+
 # 3. Source Credibility
 
 ```{r}
 
 sources_order <- c("The Daily Nation", "Other Caregivers", "Akothee", "Your Hairdresser", "Doctors", "Ministry of Health (MOH)")
-source_cred <- endline_data[,c("id", "cluster_treatment_group", paste0("source_cred_", 1:6))]
+source_cred <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", paste0("source_cred_", 1:6, "_base"), paste0("source_cred_", 1:6, "_end"))]
 
-# Descriptive - Hist
-source_cred_descriptive <- lapply(colnames(source_cred)[-c(1,2)], function(i) hist(source_cred[,i], main = sources_order[as.numeric(substr(i, start = nchar(i), stop = nchar(i)))]))
-names(source_cred_descriptive) <- sources_order
+source_cred$source_cred_1_diff <- source_cred$source_cred_1_end - source_cred$source_cred_1_base
+source_cred$source_cred_2_diff <- source_cred$source_cred_2_end - source_cred$source_cred_2_base
+source_cred$source_cred_3_diff <- source_cred$source_cred_3_end - source_cred$source_cred_3_base
+source_cred$source_cred_4_diff <- source_cred$source_cred_4_end - source_cred$source_cred_4_base
+source_cred$source_cred_5_diff <- source_cred$source_cred_5_end - source_cred$source_cred_5_base
+source_cred$source_cred_6_diff <- source_cred$source_cred_6_end - source_cred$source_cred_6_base
 
 # Descriptive - Summary Stats
-source_cred_descriptive_stats <- lapply(colnames(source_cred)[-c(1,2)], function(i) summary(source_cred[,i]))
+source_cred_descriptive_stats <- lapply(colnames(source_cred)[c(16:21)], function(i) summary(source_cred[,i]))
 names(source_cred_descriptive_stats) <- sources_order
 
 ############## Additional Questions
 
 # Do hairdressers enjoy more credibility than other hairdressers
-t.test(source_cred$source_cred_4, source_cred$source_cred_2)
-t.test(source_cred$source_cred_4, source_cred$source_cred_1)
+t.test(source_cred$source_cred_4_diff, source_cred$source_cred_2_diff)
+t.test(source_cred$source_cred_4_diff, source_cred$source_cred_1_diff)
 ```
 
 ```{r}
 # 1. Caregivers ⬆️ for Online & Online_Offline
-summary(lm(source_cred_2 ~ cluster_treatment_group, data = source_cred))
-source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_2, na.rm = T))
+model <- lm(source_cred_2_diff ~ cluster_treatment_group_base, data = source_cred)
+lm_clustered_summary(model)
+source_cred %>% group_by(cluster_treatment_group_base) %>% summarise(mean_cred = mean(source_cred_2_diff, na.rm = T))
 
 # 1. Doctors ⬆️ for Online & Online_Offline
-summary(lm(source_cred_5 ~ cluster_treatment_group, data = source_cred))
-source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_5, na.rm = T))
+model <- lm(source_cred_5_diff ~ cluster_treatment_group_base, data = source_cred)
+lm_clustered_summary(model)
+source_cred %>% group_by(cluster_treatment_group_base) %>% summarise(mean_cred = mean(source_cred_5_diff, na.rm = T))
 
 # 2. Hairdressers ⬆️ for Offline & Online_Offline
-summary(lm(source_cred_4 ~ cluster_treatment_group, data = source_cred))
-source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_4, na.rm = T))
+model <- lm(source_cred_4_diff ~ cluster_treatment_group_base, data = source_cred)
+lm_clustered_summary(model)
+source_cred %>% group_by(cluster_treatment_group_base) %>% summarise(mean_cred = mean(source_cred_4_diff, na.rm = T))
 
 # 3. Akothee ⬇️ for Online, Offline & Online_Offline
-summary(lm(source_cred_3 ~ cluster_treatment_group, data = source_cred))
-source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_3, na.rm = T))
+model <- lm(source_cred_3_diff ~ cluster_treatment_group_base, data = source_cred)
+lm_clustered_summary(model)
+source_cred %>% group_by(cluster_treatment_group_base) %>% summarise(mean_cred = mean(source_cred_3_diff, na.rm = T))
 
 ```
 
@@ -620,12 +801,68 @@ source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean
 
 ```{r}
 
-source_cred %>% group_by(cluster_treatment_group) %>% summarise(mean_cred = mean(source_cred_4, na.rm = T))
+hairdresser_lm <- lm(source_cred_4_diff ~ cluster_treatment_group_base, data = source_cred)
+hairdresser_lm_clustered <- lm_clustered_summary(hairdresser_lm)
 
-source_cred[,c("cluster_treatment_group", "source_cred_4")]
+
+source_cred %>% group_by(cluster_treatment_group_base) %>% 
+  dplyr::summarise(mean_cred = mean(source_cred_4_diff, na.rm = T)) %>% 
+  ggplot() +
+  geom_bar(aes(x = cluster_treatment_group_base, y = mean_cred, fill = cluster_treatment_group_base), stat = "identity", position = "dodge", colour = ifelse(c(1,hairdresser_lm_clustered[2:4,"Pr(>|t|)"]) <= 0.05, "red", "white")) +
+  scale_fill_manual("Treatment Group", values = c("lightgrey", "#0033A1", "#5074BF", "#B4C4E4")) +
+  ylab("Change: Level of Trust") + xlab("") + labs(title = "Level of Trust Regarding Health-Related Information in Hairdressers") +
+  theme_minimal()
 
 
 ```
+
+```{r, include = F, eval = F}
+pwc <- pairwise.t.test(source_cred$sourc, source_cred$cluster_treatment_group, 
+                      p.adjust.method = "bonferroni",
+                      pool.sd = TRUE)
+
+
+# Convert the pairwise.t.test output into a data frame with the required columns
+pwc_df <- as.data.frame(pwc$p.value)
+y_position <- source_cred %>% group_by(cluster_treatment_group) %>% summarise(source_cred_4 = max(source_cred_4, na.rm = T)) %>% pull(source_cred_4)
+pwc_df <- pwc_df %>%
+  rownames_to_column(var = "group1") %>%
+  pivot_longer(-group1, names_to = "group2", values_to = "p.value") %>%
+  dplyr::filter(group2 == "Control") %>% 
+  drop_na() %>% 
+  mutate(p.value = round(p.value, 3)) %>% 
+  mutate(y.position = max(y_position + 0.05)) %>% 
+  add_row(group1 = "Control", group2 = "Control", p.value = 1, y.position = max(y_position) + 0.05, .before = 1)
+
+p.stars <- c("***" = 0.001, "**" = 0.01, "*" = 0.05, "NS" = 1)
+
+source_cred %>% 
+  ggplot(aes(x = cluster_treatment_group, y = source_cred_4, fill = cluster_treatment_group)) +
+  geom_boxplot(alpha = 1) +
+  geom_signif(comparisons = list(c("Control", "Online_Only"), 
+                                 c("Control", "Offline_Only"), 
+                                 c("Control", "Online_Offline")), 
+              map_signif_level = function(p) {
+                if (p < 0.001) {
+                  return(paste0("p=", round(p,4), "***"))
+                } else if (p < 0.01) {
+                  return(paste0("p=", round(p,4),"**"))
+                } else if (p < 0.05) {
+                  return(paste0("p=", round(p,4),"*"))
+                } else {
+                  return("NS")
+                }
+              },
+              y_position = c(11.5, 10, 10.75)) +
+  scale_fill_manual("Treatment Group", values = c("lightgrey", "#0033A1", "#5074BF", "#B4C4E4")) +
+  ylab("Level of Trust (1-10)") + 
+  xlab("") + 
+  labs(title = "Hairdresser Credibility (Health-Related Information) - Overall Effects") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
 
 
 # 4. Vaccine Community Experiences
@@ -633,7 +870,7 @@ source_cred[,c("cluster_treatment_group", "source_cred_4")]
 ```{r}
 
 # vax_hes_1: Do leaders (religious or political leaders, teachers, health care workers) in your community support vaccinations for infants and children?
-vax_comm_exp <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", paste0("vax_hes_1", c("_base", "_end")))]
+vax_comm_exp <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", paste0("vax_hes_1", c("_base", "_end")))]
 
 # Convert 88 to NA
 vax_comm_exp$vax_hes_1_base[vax_comm_exp$vax_hes_1_base %in% c(88,99)] <- NA
@@ -647,7 +884,9 @@ tblFun(vax_comm_exp$vax_hes_1_diff)
 tblFun_II(vax_comm_exp$vax_hes_1_diff, vax_comm_exp$cluster_treatment_group)
 
 # 2. Test the difference
-summary(lm(vax_hes_1_diff ~ cluster_treatment_group_base, data = vax_comm_exp))
+m1 <- lm(vax_hes_1_diff ~ cluster_treatment_group_base, data = vax_comm_exp)
+lm_clustered_summary(m1)
+
 
 ```
 
@@ -655,10 +894,10 @@ summary(lm(vax_hes_1_diff ~ cluster_treatment_group_base, data = vax_comm_exp))
 
 ```{r}
 
-vax_attitudes <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", paste0(paste0("vax_hes_", 2:9), rep(c("_base", "_end"), each = 8)))]
+vax_attitudes <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", paste0(paste0("vax_hes_", 2:9), rep(c("_base", "_end"), each = 8)))]
 
 # Convert 88 and 99 to NA
-vax_attitudes <- vax_attitudes %>% 
+vax_attitudes[,-3] <- vax_attitudes[,-3] %>% 
   replace_with_na_all(condition = ~.x %in% c(88, 99))
 
 # Compute difference for each variable
@@ -693,21 +932,6 @@ vax_attitudes %>% group_by(cluster_treatment_group_base) %>%
   t()
 
 
-# Test Group Differences
-vax_attitudes_differences_lm <- list(summary(lm(vax_hes_2_diff ~ cluster_treatment_group_base, data = vax_attitudes)),
-summary(lm(vax_hes_3_diff ~ cluster_treatment_group_base, data = vax_attitudes)),
-summary(lm(vax_hes_4_diff ~ cluster_treatment_group_base, data = vax_attitudes)),
-summary(lm(vax_hes_5_diff ~ cluster_treatment_group_base, data = vax_attitudes)),
-summary(lm(vax_hes_6_diff ~ cluster_treatment_group_base, data = vax_attitudes)),
-summary(lm(vax_hes_7_diff ~ cluster_treatment_group_base, data = vax_attitudes)),
-summary(lm(vax_hes_8_diff ~ cluster_treatment_group_base, data = vax_attitudes)),
-summary(lm(vax_hes_9_diff ~ cluster_treatment_group_base, data = vax_attitudes)))
-
-names(vax_attitudes_differences_lm) <- vax_hes_likert_qs
-vax_attitudes_differences_lm
-
-
-# Run the regressions
 reg1 <- lm(vax_hes_2_diff ~ cluster_treatment_group_base, data = vax_attitudes)
 reg2 <- lm(vax_hes_3_diff ~ cluster_treatment_group_base, data = vax_attitudes)
 reg3 <- lm(vax_hes_4_diff ~ cluster_treatment_group_base, data = vax_attitudes)
@@ -717,16 +941,19 @@ reg6 <- lm(vax_hes_7_diff ~ cluster_treatment_group_base, data = vax_attitudes)
 reg7 <- lm(vax_hes_8_diff ~ cluster_treatment_group_base, data = vax_attitudes)
 reg8 <- lm(vax_hes_9_diff ~ cluster_treatment_group_base, data = vax_attitudes)
 
-# Create a single regression table
-stargazer(reg1, reg2, reg3, reg4, reg5, reg6, reg7, reg8, 
-          type = "text",  # Change to "latex" or "html" for different output formats
-          title = "Regression Results for Vaccine Hesitancy Differences",
-          column.labels = c("vax_hes_2_diff", "vax_hes_3_diff", "vax_hes_4_diff", 
-                            "vax_hes_5_diff", "vax_hes_6_diff", "vax_hes_7_diff",
-                            "vax_hes_8_diff", "vax_hes_9_diff"),
-          dep.var.labels.include = FALSE,
-          covariate.labels = "Cluster Treatment Group",
-          align = TRUE)
+# Test Group Differences
+vax_attitudes_differences_lm <- list(lm_clustered_summary(reg1),
+                                     lm_clustered_summary(reg2),
+                                     lm_clustered_summary(reg3),
+                                     lm_clustered_summary(reg4),
+                                     lm_clustered_summary(reg5),
+                                     lm_clustered_summary(reg6),
+                                     lm_clustered_summary(reg7),
+                                     lm_clustered_summary(reg8))
+
+names(vax_attitudes_differences_lm) <- vax_hes_likert_qs
+vax_attitudes_differences_lm
+
 
 ```
 
@@ -747,7 +974,7 @@ vax_hes_likert_qs_plot <-  c("Childhood vaccines are effective",
 
 # Significance indicators
 regressions_ls <- list(reg1, reg2, reg3, reg4, reg5, reg6, reg7, reg8)
-significance <- sapply(lapply(regressions_ls, summary), function(i) i$coefficients[2:4,"Pr(>|t|)"]) %>% 
+significance <- sapply(lapply(regressions_ls, lm_clustered_summary), function(i) i[2:4,"Pr(>|t|)"]) %>% 
   data.frame() %>% rownames_to_column("Group") %>% 
   pivot_longer(X1:X8, names_to = "names", values_to = "p.values") %>% 
   arrange(names)
@@ -760,7 +987,7 @@ vax_attitudes[,c("cluster_treatment_group_base", paste0("vax_hes_", 2:9, "_diff"
   group_by(cluster_treatment_group_base, vax_hes_element) %>% 
   dplyr::summarise(mean_value = mean(values, na.rm = T), .groups = "drop") %>% 
   group_by(vax_hes_element) %>% 
-  mutate(mean_value_control = mean_value[cluster_treatment_group_base == "Control"],
+  dplyr::mutate(mean_value_control = mean_value[cluster_treatment_group_base == "Control"],
          mean_value_diff_control = mean_value - mean_value_control) %>% 
   dplyr::select(-mean_value_control) %>% 
   filter(cluster_treatment_group_base != "Control") %>% 
@@ -802,7 +1029,10 @@ tblFun(baseline_endline_merged$B6a_number_base)
 tblFun(baseline_endline_merged$B6a_number_end)
 tblFun(baseline_endline_merged$B6a_number_end - baseline_endline_merged$B6a_number_base)
 
-x <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B6a_number_base", "B6a_number_end", 
+# Clean the original vax_beh_int_1 variable
+baseline_endline_merged[!is.na(baseline_endline_merged$vax_beh_int_1_1_base),]$vax_beh_int_1 <- NA
+
+x <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", "B6a_number_base", "B6a_number_end", "vax_beh_int_1", 
                                 sort(paste0(paste0("current_age_", 1:7), rep(c("_base", "_end"), each = 7))), 
                                 sort(paste0(paste0("current_name_", 1:7), rep(c("_base", "_end"), each = 7))),
                                 sort(paste0(paste0("vax_beh_int_1_", 1:7), rep(c("_base", "_end"), each = 7))))]
@@ -821,6 +1051,42 @@ x.3 <- x %>%
 
 x.4 <- cbind(x.1, x.2[,c("age")], x.3[,c("vax_status")])
 x.4$child_number <- str_remove(x.4$child_number, "current_[a-z]{3,4}_")
+x.4$line <- sapply(str_split(x.4$child_number, "_"), function(i) i[2])
+x.4$child_number <- sapply(str_split(x.4$child_number, "_"), function(i) i[1])
+
+# Replace all 88s and 99s with NAs
+x.4[,-3] <- x.4[,-3] %>% 
+  replace_with_na_all(condition = ~.x %in% c(88, 99))
+
+# If people vaccinated 1 child. Did they often vaccinate all?
+x.5 <- x.4 %>% 
+  group_by(id) %>%
+  filter(child_number <= max(B6a_number_base) | child_number <= max(B6a_number_end)) %>%
+  group_by(id, line) %>% 
+  dplyr::mutate(mean_vax_status = mean(vax_status, na.rm = T)) %>% 
+  ungroup() 
+
+# Merge the vax_beh_int_1 into the observations where there is no mean vax status at baseline because the question wasn't asked
+x.5$mean_vax_status_fused <- ifelse(is.nan(x.5$mean_vax_status), x.5$vax_beh_int_1, x.5$mean_vax_status)
+
+# Format df into an analysable format and then 
+x.6 <- x.5 %>% 
+  group_by(id, line) %>%
+  dplyr::summarise(cluster_treatment_group_base = unique(cluster_treatment_group_base), B0_cluster_base = unique(B0_cluster_base), mean_vax_status_fused = mean(mean_vax_status_fused, na.rm = T)) %>% 
+  pivot_wider(names_from = line, values_from = mean_vax_status_fused, names_prefix = "mean_vax_status_") %>% 
+  dplyr::mutate(mean_vax_status_diff = mean_vax_status_end - mean_vax_status_base)
+
+################ Analysis ###################
+m1 <- lm(mean_vax_status_end ~ cluster_treatment_group_base, data = x.6)
+lm_clustered_summary(m1)
+
+m1 <- lm(mean_vax_status_diff ~ cluster_treatment_group_base, data = x.6)
+lm_clustered_summary(m1)
+
+
+#########################################
+
+# Prep for manual analysis (which we didn't do)
 x.4_no_na_eligible_age <- x.4 %>% drop_na() %>% filter(age > 9)
 
 #x.4_no_na_eligible_age %>% 
@@ -828,16 +1094,18 @@ x.4_no_na_eligible_age <- x.4 %>% drop_na() %>% filter(age > 9)
 #              range = "A1",
 #              reformat = F)
 
-reported_vax_status <- endline_data[,c("id", "cluster_treatment_group", "B6a_number", paste0("current_age_", 1:7), paste0("vax_beh_int_1_", 1:7), paste0("child_not_vaxxed_and_below_14_", 1:7))] %>% 
-  drop_na(any_of("child_not_vaxxed_and_below_14_1"))
 
+#########################################
+
+reported_vax_status <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", "B6a_number_end", paste0("current_age_", 1:7, "_end"), paste0("vax_beh_int_1_", 1:7, "_end"), paste0("child_not_vaxxed_and_below_14_", 1:7, "_end"))] %>% 
+  drop_na(any_of("child_not_vaxxed_and_below_14_1"))
 
 
 # Assuming reported_vax_status is your dataset
 age_long <- reported_vax_status %>%
   pivot_longer(cols = starts_with("current_age"), names_to = "child_number", values_to = "age") %>%
   mutate(child_number = str_extract(child_number, "\\d+")) %>% 
-  dplyr::select(id, cluster_treatment_group, child_number, age)
+  dplyr::select(id, cluster_treatment_group_base, B0_cluster_base, child_number, age)
 
 not_vaxxed_long <- reported_vax_status %>%
   pivot_longer(cols = starts_with("child_not_vaxxed_and_below_14"), names_to = "child_number", values_to = "child_not_vaxxed_and_below_14") %>%
@@ -853,7 +1121,7 @@ vax_status_long <- reported_vax_status %>%
 reported_vax_status_final_long <- cbind(age_long, not_vaxxed_long, vax_status_long)
 
 # Convert 88 and 99 to NA
-reported_vax_status_final_long <- reported_vax_status_final_long %>% 
+reported_vax_status_final_long[,-3] <- reported_vax_status_final_long[,-3] %>% 
   replace_with_na_all(condition = ~.x %in% c(88, 99))
 
 ```
@@ -867,15 +1135,15 @@ reported_vax_status_final_long %>%
 temp <- reported_vax_status_final_long %>% 
   filter(age > 8 & age < 15) %>% 
   group_by(id) %>% 
-  summarise(cluster_treatment_group, mean_vax_status = mean(vax_status, na.rm = T), .groups = "drop")
+  dplyr::summarise(cluster_treatment_group_base, B0_cluster_base, mean_vax_status = mean(vax_status, na.rm = T), .groups = "drop")
 
 tblFun(temp$mean_vax_status)
-tblFun_II(temp$mean_vax_status, temp$cluster_treatment_group)
-temp %>% group_by(cluster_treatment_group) %>% summarise(mean_vax_status = mean(mean_vax_status, na.rm = T))
+tblFun_II(temp$mean_vax_status, temp$cluster_treatment_group_base)
+temp %>% group_by(cluster_treatment_group_base) %>% summarise(mean_vax_status = mean(mean_vax_status, na.rm = T))
 temp %>% summarise(mean_vax_status = mean(mean_vax_status, na.rm = T))
-summary(lm(mean_vax_status ~ cluster_treatment_group, data = temp))
-summary(lm(mean_vax_status ~ cluster_treatment_group, data = temp))
 
+model <- lm(mean_vax_status ~ cluster_treatment_group_base, data = temp)
+lm_clustered_summary(model)
 
 # Are those that are worse at identifying misinformation also less likely to have vaccinated their kids?
 temp1 <- merge(temp, truth_discernment[, c("id", "auc_diff", "auc_hpv_only_diff", "auc_non_hpv_diff", "extremes_count_diff")], by = "id")
@@ -890,39 +1158,28 @@ cor.test(temp1$mean_vax_status, temp1$extremes_count_diff)
 
 ```{r}
 
-vax_beh_int <- endline_data[,c("id", "cluster_treatment_group", "random_number_for_mini_treatment", paste0("vax_beh_int_", c(2:4,6)))] %>% 
-  drop_na() %>% 
-  pivot_longer(vax_beh_int_2:vax_beh_int_6, names_to = "q", values_to = "likert_value")
-
-# Convert 88 and 99 to NA
-vax_beh_int <- vax_beh_int %>% 
-  replace_with_na_all(condition = ~.x %in% c(88, 99))
-  
-vax_beh_int$q[vax_beh_int$q == "vax_beh_int_2"] <- "Get more information about HPV vaccine?"
-vax_beh_int$q[vax_beh_int$q == "vax_beh_int_3"] <- "Consider getting the vaccine?"
-vax_beh_int$q[vax_beh_int$q == "vax_beh_int_4"] <- "Try to get the vaccine?"
-vax_beh_int$q[vax_beh_int$q == "vax_beh_int_6"] <- "Actually get the vaccine?"
-
-vax_beh_int %>% 
-  group_by(q) %>% 
-  summarise(mean_likert = mean(likert_value, na.rm = T))
-
-
-vax_beh_int <- endline_data[,c("id", "cluster_treatment_group", "random_number_for_mini_treatment", paste0("vax_beh_int_", c(2:4,6)))] %>% 
+vax_beh_int <- baseline_endline_merged[,c("id", "cluster_treatment_group_base", "B0_cluster_base", "random_number_for_mini_treatment", paste0("vax_beh_int_", c(2:4,6), "_end"))] %>% 
   drop_na()
 
-summary(lm(vax_beh_int_2 ~ cluster_treatment_group, data = vax_beh_int))
-summary(lm(vax_beh_int_3 ~ cluster_treatment_group, data = vax_beh_int))
-summary(lm(vax_beh_int_4 ~ cluster_treatment_group, data = vax_beh_int))
+# "Get more information about HPV vaccine?"
+model <- lm(vax_beh_int_2_end ~ cluster_treatment_group_base, data = vax_beh_int)
+lm_clustered_summary(model)
 
-######## Mini Treatment
+# "Consider getting the vaccine?"
+model <- lm(vax_beh_int_3_end ~ cluster_treatment_group_base, data = vax_beh_int)
+lm_clustered_summary(model)
+
+# "Try to get the vaccine?"
+model <- lm(vax_beh_int_4_end ~ cluster_treatment_group_base, data = vax_beh_int)
+lm_clustered_summary(model)
+
+######## Mini Treatment - "Actually get the vaccine?"
 mini_treatment <- vax_beh_int %>% 
-  filter(cluster_treatment_group == "Control") %>%
+  filter(cluster_treatment_group_base == "Control") %>%
   mutate(mini_treatment = factor(ifelse(random_number_for_mini_treatment > 0.5, "Yes", "No")))
-summary(lm(vax_beh_int_6 ~ mini_treatment, data = mini_treatment))
-mini_treatment %>% 
-  group_by(mini_treatment) %>% 
-  summarise(vax_beh_int_6 = mean(vax_beh_int_6))
+
+model <- lm(vax_beh_int_6_end ~ mini_treatment, data = mini_treatment)
+lm_clustered_summary(model)
 
 ```
 

@@ -39,6 +39,10 @@ rm(miss_pkgs, pkgs)
 
 # Read data
 baseline_data <- read.csv("Raw Data/Main Data Collection/VCF2 - RCT - Recruitment + Baseline - Caregivers_WIDE.csv")
+baseline_data_vax_beh_int_1 <- read.csv("Raw Data/Main Data Collection/VCF2 - Baseline - Vax_Beh_Int_1 old.csv")[-14906,]
+
+# Add one variable lost in surveyCTO
+baseline_data <- cbind(baseline_data, vax_beh_int_1 = baseline_data_vax_beh_int_1$vax_beh_int_1)
 
 # Fix the Stupid Stata ""-issue and Dates
 baseline_data[, sapply(baseline_data, class) == 'character'][baseline_data[, sapply(baseline_data, class) == 'character'] == ""] <- NA
@@ -80,6 +84,11 @@ baseline_data <- baseline_data %>% filter(B0_cluster != 363)
 baseline_data <- baseline_data %>% filter(B0_cluster != 54)
 baseline_data <- baseline_data %>% filter(B0_cluster != 378)
 baseline_data <- baseline_data %>% filter(B0_cluster != 248)
+
+
+# Add treatment variable for a few buggy responses
+baseline_data$cluster_treatment_group[baseline_data$final_ID %in% c("84154Nov18093627", "35128Nov18105612", "33116Nov18114828", "35188Nov18125741", "57117Nov18140126", "43117Nov18151628")] <- "Offline_Only"
+baseline_data$cluster_treatment_group[baseline_data$final_ID %in% c("42157Nov13104026", "77114Nov13105220")] <- "Control"
 
 ```
 
@@ -229,6 +238,7 @@ sum(duplicated(baseline_data$final_ID))
 
 ```
 
+
 ### Manually edit data
 
 #### 1. Mislabelled Clusters
@@ -292,7 +302,7 @@ table(baseline_data[baseline_data$en_name == "Ruth Wanjiru Ndungu",]$B0_cluster)
 
 baseline_data %>% 
   group_by(B0_cluster) %>% 
-  summarise(n = n()) %>% 
+  dplyr::summarise(n = n()) %>% 
   arrange(B0_cluster)
 ```
 
@@ -422,7 +432,7 @@ baseline_data %>%
   filter(cluster_treatment_group %in% c("Offline_Only", "Online_Offline")) %>% 
   filter(county_name == "Nairobi") %>% 
   group_by(B11a_phonenumber) %>% 
-  summarise(n = n()) %>% 
+  dplyr::summarise(n = n()) %>% 
   arrange(desc(n))
 
 
@@ -658,7 +668,7 @@ baseline_data[baseline_data$B11a_phonenumber == "0" & !is.na(baseline_data$B11a_
 baseline_data_new <- baseline_data %>% 
   #filter(cluster_treatment_group %in% c("Offline_Only", "Online_Offline")) %>% 
   group_by(B11a_phonenumber) %>%
-  mutate(hairdresser_ID = cur_group_id())
+  dplyr::mutate(hairdresser_ID = cur_group_id())
 
 # Remove the ID for all those that don't have a phone number
 if(length(table(baseline_data_new$hairdresser_ID[is.na(baseline_data_new$B11a_phonenumber)])) == 1){
@@ -820,13 +830,13 @@ for (i in 1:max(components$membership)) {
       #plot(main = paste("Component", i), subgraph, edge.width = 0.5,  vertex.size = degree(subgraph),  vertex.label.cex = 1)
     }
 }
-range_write(google_df,
-                  ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
-                  sheet = "Network_Analysis - Pre-Recruitment",
-                  range = "A2",
-                  reformat = F,
-                  col_names = F)
-
+#range_write(google_df,
+#                  ss = "https://docs.google.com/spreadsheets/d/1L5oYnl6DeUabV-9v5cAKt_TOkfktLXX9l3tUHL9r6L8/edit#gid=200599833",
+#                  sheet = "Network_Analysis - Pre-Recruitment",
+#                  range = "A2",
+#                  reformat = F,
+#                  col_names = F)
+#
 
 ```
 
@@ -882,7 +892,7 @@ baseline_data_new_ready_for_hairdresser_database$B12a_alternativepn_who <- unnam
 # Create hairdresser database
 hairdresser_database <- baseline_data_new_ready_for_hairdresser_database %>% 
   group_by(hairdresser_ID) %>% 
-  summarise(response_final_IDs = paste(final_ID, collapse = ", "),
+  dplyr::summarise(response_final_IDs = paste(final_ID, collapse = ", "),
             treatment_group = {
               counts <- table(cluster_treatment_group)
               summary_str <- paste(names(counts), " (", counts, ")", sep = "", collapse = ", ")
@@ -947,11 +957,11 @@ participants_to_kick_out_from_study <- unlist(str_split(hairdresser_database_bet
 # How does this affect cluster sizes? NOT TERRIBLE
 temp_1 <- baseline_data_new %>% 
   group_by(B0_cluster) %>% 
-  summarise(n = n())
+  dplyr::summarise(n = n())
 temp_2 <- baseline_data_new %>% 
   filter(final_ID %in% participants_to_kick_out_from_study) %>% 
   group_by(B0_cluster) %>% 
-  summarise(n = n()) 
+  dplyr::summarise(n = n()) 
 left_join(temp_1, temp_2, by = "B0_cluster")
   
 
@@ -992,7 +1002,7 @@ hairdresser_database_better_IDs_no_contamination$dominant_cluster <- as.numeric(
 # Then figure out how many participants per cluster to enable sorting clusters with fewer participants to the top
 clusters_n <- baseline_data_new %>% 
   group_by(B0_cluster) %>% 
-  summarise(n = n()) %>%
+  dplyr::summarise(n = n()) %>%
   mutate(B0_cluster = as.character(B0_cluster), n = as.character(n))
   #dplyr::select(n, B0_cluster)
 

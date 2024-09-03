@@ -1,0 +1,91 @@
+---
+title: "VCF_Hairdresser_Qs_Cs"
+author: "Jonathan Karl"
+date: "`r format(Sys.time(), '%a %d %b %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r, include=F}
+
+# Clean the environment
+rm(list = ls())
+
+# Prevent scientific notation
+knitr::opts_knit$set(options(scipen=999))
+
+# Install and load all the packages that will be used for analysis
+pkgs <- c("tidyverse", "googlesheets4", "lubridate")
+
+miss_pkgs <- pkgs[!pkgs %in% installed.packages()[,1]] # vector of missing packages
+if(length(miss_pkgs)>0){
+  install.packages(miss_pkgs)
+}
+invisible(lapply(pkgs,library,character.only=TRUE))
+
+# Clear our memory by removing objects that are no longer needed.
+rm(miss_pkgs, pkgs)
+
+```
+
+```{r, include=FALSE}
+
+visit_logs_raw <- read_sheet(ss = "https://docs.google.com/spreadsheets/d/1BO-YCncRnUabR9hUwvlHo19Un77TAruY_p3mVsrQcWQ/edit#gid=0",
+           sheet = "data")
+visit_logs_raw$SubmissionDate <-  as_datetime(visit_logs_raw$SubmissionDate)
+visit_logs_raw$submission_date_dateonly <- floor_date(visit_logs_raw$SubmissionDate, "day")
+
+```
+
+# Challenges - Last Week
+
+```{r, echo = F}
+
+all_challenges <- visit_logs_raw$visit_challenges[visit_logs_raw$submission_date_dateonly >= (today() - 7)]
+all_challenges <- str_replace_all(all_challenges, "NA|Na|N/A|None|No question|No|NONE|No challenge|No challenges", "")
+all_challenges[all_challenges == ""] <- NA
+all_challenges <- all_challenges[!is.na(all_challenges)]
+print(all_challenges)
+
+```
+
+
+# Questions - Last Week
+
+```{r, echo = F}
+
+all_questions <- visit_logs_raw$visit_questions[visit_logs_raw$submission_date_dateonly >= (today() - 7)]
+all_questions <- str_replace_all(all_questions, "NA|Na|N/A|None|No question|No|NONE", "")
+all_questions[all_questions == ""] <- NA
+all_questions <- all_questions[!is.na(all_questions)]
+print(all_questions)
+
+```
+
+# Challenges - All Time
+
+```{r, echo = F}
+
+all_challenges <- visit_logs_raw$visit_challenges
+all_challenges <- str_replace_all(all_challenges, "NA|Na|N/A|None|No question|No|NONE|No challenge|No challenges", "")
+all_challenges[all_challenges == ""] <- NA
+all_challenges <- all_challenges[!is.na(all_challenges)]
+print(all_challenges)
+
+```
+
+
+# Questions - All Time
+
+```{r, echo = F}
+
+all_questions <- visit_logs_raw$visit_questions
+all_questions <- str_replace_all(all_questions, "NA|Na|N/A|None|No question|No|NONE", "")
+all_questions[all_questions == ""] <- NA
+all_questions <- all_questions[!is.na(all_questions)]
+print(all_questions)
+
+
+```
