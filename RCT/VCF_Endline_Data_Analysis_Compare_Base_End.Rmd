@@ -367,7 +367,7 @@ manipulation_confidence_df$detect_misinfo_12_3_diff <- manipulation_confidence_d
 
 
 ############### FOR MANIPULATIVE POSTS VS. NON-MANIPULATIVE POSTS
-# Average Confidence by Treatment Group for the Correctly Identified Manipulative Posts
+# Average Confidence by Treatment Group for the Manipulative and non-Manipulative Posts
 avg_conf <- cbind(rowMeans(manipulation_confidence_df[,paste0("detect_misinfo_", 1:12, "_3_end")][,manipulativeness_coding], na.rm = T),
                   rowMeans(manipulation_confidence_df[,paste0("detect_misinfo_", 1:12, "_3_end")][,!manipulativeness_coding], na.rm = T)) %>%
   data.frame() 
@@ -390,6 +390,42 @@ t.test(avg_conf_treatgroups$mean_conf_manip, avg_conf_treatgroups$mean_conf_non_
 manipulation_confidence_df$mean_confidence_end <- rowMeans(manipulation_confidence_df %>% dplyr::select(ends_with("end")), na.rm = T)
 model <- lm(mean_confidence_end ~ cluster_treatment_group_base, data = manipulation_confidence_df)
 lm_clustered_summary(model)
+
+
+
+################ How is confidence correlated with correct identification of manipulativeness?
+manipulativeness_and_confidence <- cbind(manipulation_confidence_df[,paste0("detect_misinfo_", 1:12, "_3_end")], 
+      manipulativeness_df[,paste0("detect_misinfo_", 1:12, "_1_end")])
+
+## Reshape the wide dataset into long format
+manipulativeness_and_confidence_long <- manipulativeness_and_confidence %>%
+  pivot_longer(
+    cols = ends_with("3_end"),
+    names_to = "post",
+    names_prefix = "confidence_post",
+    values_to = "confidence"
+  ) %>%
+  mutate(post = substr(post, nchar(post)-7, nchar(post)-6)) %>% mutate(post = str_remove(post, "_")) %>% 
+  pivot_longer(
+    cols = ends_with("1_end"),
+    names_to = "post_id",
+    names_prefix = "identified_post",
+    values_to = "identified_manipulative"
+  ) %>%
+  mutate(post_id = substr(post_id, nchar(post_id)-7, nchar(post_id)-6)) %>% mutate(post_id = str_remove(post_id, "_")) %>% 
+  filter(post == post_id) %>%  # Ensure matching post IDs
+  dplyr::select(-post_id) %>%         # Remove redundant column
+  mutate(actual_manipulation = rep(manipulativeness_coding, nrow(manipulativeness_and_confidence)))  # Add the actual manipulation vector
+
+
+# Add a column to check if the identification was correct
+manipulativeness_and_confidence_long <- manipulativeness_and_confidence_long %>%
+  mutate(correct_identification = ifelse(identified_manipulative == actual_manipulation, 1, 0))
+
+# Calculate correlation between confidence and correct identification
+cor.test(manipulativeness_and_confidence_long$confidence, manipulativeness_and_confidence_long$correct_identification)
+
+```
 
 ################# Are people more confident if they got the techniques completely right, got all of them + false positives, got at least 1 of them correct
 
@@ -488,8 +524,6 @@ sharing_propensity_perception <- endline_data[,c("id", "cluster_treatment_group"
 # Prep data for how a post was actually manipulative or not
 sharing_propensity_perception$manipulativeness_actual <- manipulativeness_coding[sharing_propensity_perception$post_number]
 
-
-
 # 2. Avg. sharing intentions for actual manipulative posts ⬇️ for Online, Offline & Online_Offline
 model <- lm(sharing_propensity_end ~ cluster_treatment_group, data = sharing_propensity_perception %>% filter(post_number %in% manipulative_posts))
 lm_clustered_summary(model)
@@ -526,6 +560,17 @@ lm_clustered_summary(model)
 # 14. Avg. sharing intention for manipulative posts where technique X is perceived ⬇️ for Online, Offline & Online_Offline
 # 15. Avg. sharing intention for manipulative posts where technique X is perceived but was not present ➡️ for Online, Offline & Online_Offline
 # 16. Avg. sharing intention for manipulative posts where technique X is perceived, which was present ➡️ for Online, Offline & Online_Offline
+
+
+############## Descriptive Findings
+
+######### Generally did people share manipulative (or perceived as manipulative posts) less? --> Yes.
+sharing_propensity_perception %>% 
+  group_by(manipulativeness_actual, manipulativeness_perception) %>% 
+  dplyr::summarise(mean(sharing_propensity_end), n = n())
+
+t.test(sharing_propensity_end ~ manipulativeness_perception, data = sharing_propensity_perception)
+t.test(sharing_propensity_end ~ manipulativeness_actual, data = sharing_propensity_perception)
 
 
 ```
@@ -655,6 +700,17 @@ truth_discernment$auc_non_hpv_diff <- truth_discernment$auc_non_hpv_end - truth_
 model <- lm(auc_non_hpv_diff ~ cluster_treatment_group_base, data = truth_discernment)
 lm_clustered_summary(model)
 
+###############
+
+# Is there a non-health non-HPV specific effect
+truth_discernment$auc_non_health_non_hpv_only_base <- compute_auc(truth_discernment[,paste0("truth_discernment_", c(10,11,14,15,16), "_base")], true_false_coding[c(10,11,14,15,16)])
+truth_discernment$auc_non_health_non_hpv_only_end <- compute_auc(truth_discernment[,paste0("truth_discernment_", c(10,11,14,15,16), "_end")], true_false_coding[c(10,11,14,15,16)])
+truth_discernment$auc_non_health_non_hpv_only_diff <- truth_discernment$auc_non_health_non_hpv_only_end - truth_discernment$auc_non_health_non_hpv_only_base
+model <- lm(auc_non_health_non_hpv_only_diff ~ cluster_treatment_group_base, data = truth_discernment)
+lm_clustered_summary(model)
+
+# Is there an effect for health Non-HPV
+# Not computable
 
 # Is there any Myth specific differences?
 myth_specific_ls <- list(question_specific_truthfulness_diff(1),
